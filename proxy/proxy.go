@@ -289,8 +289,9 @@ func (cs *Session) sendError(id json.RawMessage, reply *ErrorReply) error {
 }
 
 func (s *ProxyServer) writeError(w http.ResponseWriter, status int, msg string) {
-	w.WriteHeader(status)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(status)
+	io.WriteString(w, msg)
 }
 
 func (s *ProxyServer) currentBlockTemplate() *BlockTemplate {

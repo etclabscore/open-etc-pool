@@ -259,13 +259,13 @@ func (s *ApiServer) AccountIndex(w http.ResponseWriter, r *http.Request) {
 	// Refresh stats if stale
 	if !ok || reply.updatedAt < now-cacheIntv {
 		exist, err := s.backend.IsMinerExists(login)
-		if !exist {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			log.Printf("Failed to fetch stats from backend: %v", err)
+			return
+		}
+		if !exist {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
