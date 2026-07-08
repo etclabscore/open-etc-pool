@@ -107,8 +107,8 @@
 		"bgsave": false
 	},
 
-	"newrelicEnabled": false,
-	"newrelicName": "MyEtherProxy",
-	"newrelicKey": "SECRET_KEY",
-	"newrelicVerbose": false
+	"metrics": {
+		"enabled": false,
+		"listen": "127.0.0.1:8081"
+	}
 }

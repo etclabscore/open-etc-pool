@@ -23,10 +23,12 @@ type Config struct {
 	BlockUnlocker payouts.UnlockerConfig `json:"unlocker"`
 	Payouts       payouts.PayoutsConfig  `json:"payouts"`
 
-	NewrelicName    string `json:"newrelicName"`
-	NewrelicKey     string `json:"newrelicKey"`
-	NewrelicVerbose bool   `json:"newrelicVerbose"`
-	NewrelicEnabled bool   `json:"newrelicEnabled"`
+	Metrics MetricsConfig `json:"metrics"`
+}
+
+type MetricsConfig struct {
+	Enabled bool   `json:"enabled"`
+	Listen  string `json:"listen"`
 }
 
 type Proxy struct {
