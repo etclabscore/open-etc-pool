@@ -31,7 +31,7 @@
           # Hash of the module dependencies. Recompute after go.mod/go.sum
           # changes: set to pkgs.lib.fakeHash, run `nix build .#default`, and
           # copy the expected hash from the error.
-          vendorHash = "sha256-VQK8HPlgEZkyJGMaU7kvO0/sIseyr55DwypIor0zbRw=";
+          vendorHash = "sha256-bpWpheF7goaqnz87o6qa9nhB9m1i1j6ZRl10B7sTg50=";
 
           subPackages = [ "." ];
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/yvasiyarov/gorelic"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/etclabscore/open-etc-pool/api"
 	"github.com/etclabscore/open-etc-pool/payouts"
@@ -42,13 +43,20 @@ func startPayoutsProcessor(ctx context.Context) {
 	u.Start(ctx)
 }
 
-func startNewrelic() {
-	if cfg.NewrelicEnabled {
-		nr := gorelic.NewAgent()
-		nr.Verbose = cfg.NewrelicVerbose
-		nr.NewrelicLicense = cfg.NewrelicKey
-		nr.NewrelicName = cfg.NewrelicName
-		nr.Run()
+// metricsHandler serves Prometheus metrics. The default registry already
+// exposes Go runtime and process telemetry (goroutines, heap, GC, ...) — the
+// process-level monitoring the old New Relic agent used to provide.
+func metricsHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	return mux
+}
+
+func startMetrics() {
+	log.Printf("Starting metrics server on %v", cfg.Metrics.Listen)
+	srv := &http.Server{Addr: cfg.Metrics.Listen, Handler: metricsHandler()}
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("Metrics server error: %v", err)
 	}
 }
 
@@ -79,8 +87,6 @@ func main() {
 		log.Printf("Running with %v threads", cfg.Threads)
 	}
 
-	startNewrelic()
-
 	backend = storage.NewRedisClient(&cfg.Redis, cfg.Coin)
 	pong, err := backend.Check()
 	if err != nil {
@@ -98,6 +104,9 @@ func main() {
 	// them to finish the current cycle before exiting.
 	var wg sync.WaitGroup
 
+	if cfg.Metrics.Enabled {
+		go startMetrics()
+	}
 	if cfg.Proxy.Enabled {
 		go startProxy()
 	}
