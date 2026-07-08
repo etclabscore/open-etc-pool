@@ -1,6 +1,7 @@
 package payouts
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/big"
@@ -72,7 +73,7 @@ func NewBlockUnlocker(cfg *UnlockerConfig, backend *storage.RedisClient, network
 	return u
 }
 
-func (u *BlockUnlocker) Start() {
+func (u *BlockUnlocker) Start(ctx context.Context) {
 	log.Println("Starting block unlocker")
 	intv := util.MustParseDuration(u.config.Interval)
 	timer := time.NewTimer(intv)
@@ -83,16 +84,18 @@ func (u *BlockUnlocker) Start() {
 	u.unlockAndCreditMiners()
 	timer.Reset(intv)
 
-	go func() {
-		for {
-			select {
-			case <-timer.C:
-				u.unlockPendingBlocks()
-				u.unlockAndCreditMiners()
-				timer.Reset(intv)
-			}
+	for {
+		select {
+		case <-timer.C:
+			u.unlockPendingBlocks()
+			u.unlockAndCreditMiners()
+			timer.Reset(intv)
+		case <-ctx.Done():
+			log.Println("Stopping block unlocker")
+			timer.Stop()
+			return
 		}
-	}()
+	}
 }
 
 type UnlockResult struct {
