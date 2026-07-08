@@ -17,7 +17,7 @@ jobs:
     # 127.0.0.1:6379, so we provide one as a service container.
     services:
       redis:
-        image: redis:7
+        image: redis:8
         ports:
           - 6379:6379
         options: >-

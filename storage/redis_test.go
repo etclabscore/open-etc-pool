@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"gopkg.in/redis.v3"
+	"github.com/redis/go-redis/v9"
 )
 
 var r *RedisClient
@@ -51,7 +51,7 @@ func TestGetPayees(t *testing.T) {
 
 	n := 256
 	for i := 0; i < n; i++ {
-		r.client.HSet(r.formatKey("miners", strconv.Itoa(i)), "balance", strconv.Itoa(i))
+		r.client.HSet(ctx, r.formatKey("miners", strconv.Itoa(i)), "balance", strconv.Itoa(i))
 	}
 
 	var payees []string
@@ -71,7 +71,7 @@ func TestGetPayees(t *testing.T) {
 func TestGetBalance(t *testing.T) {
 	reset()
 
-	r.client.HSet(r.formatKey("miners:x"), "balance", "750")
+	r.client.HSet(ctx, r.formatKey("miners:x"), "balance", "750")
 
 	v, _ := r.GetBalance("x")
 	if v != 750 {
@@ -91,7 +91,7 @@ func TestLockPayouts(t *testing.T) {
 	reset()
 
 	r.LockPayouts("x", 1000)
-	v := r.client.Get("test:payments:lock").Val()
+	v := r.client.Get(ctx, "test:payments:lock").Val()
 	if v != "x:1000" {
 		t.Errorf("Invalid lock amount: %v", v)
 	}
@@ -105,10 +105,10 @@ func TestLockPayouts(t *testing.T) {
 func TestUnlockPayouts(t *testing.T) {
 	reset()
 
-	r.client.Set(r.formatKey("payments:lock"), "x:1000", 0)
+	r.client.Set(ctx, r.formatKey("payments:lock"), "x:1000", 0)
 
 	r.UnlockPayouts()
-	err := r.client.Get(r.formatKey("payments:lock")).Err()
+	err := r.client.Get(ctx, r.formatKey("payments:lock")).Err()
 	if err != redis.Nil {
 		t.Errorf("Must release lock")
 	}
@@ -126,18 +126,20 @@ func TestIsPayoutsLocked(t *testing.T) {
 func TestUpdateBalance(t *testing.T) {
 	reset()
 
-	r.client.HMSetMap(
+	r.client.HSet(
+		ctx,
 		r.formatKey("miners:x"),
 		map[string]string{"paid": "50", "balance": "1000"},
 	)
-	r.client.HMSetMap(
+	r.client.HSet(
+		ctx,
 		r.formatKey("finances"),
 		map[string]string{"paid": "500", "balance": "10000"},
 	)
 
 	amount := int64(250)
 	r.UpdateBalance("x", amount)
-	result := r.client.HGetAllMap(r.formatKey("miners:x")).Val()
+	result := r.client.HGetAll(ctx, r.formatKey("miners:x")).Val()
 	if result["pending"] != "250" {
 		t.Error("Must set pending amount")
 	}
@@ -148,7 +150,7 @@ func TestUpdateBalance(t *testing.T) {
 		t.Error("Must not touch paid")
 	}
 
-	result = r.client.HGetAllMap(r.formatKey("finances")).Val()
+	result = r.client.HGetAll(ctx, r.formatKey("finances")).Val()
 	if result["pending"] != "250" {
 		t.Error("Must set pool pending amount")
 	}
@@ -159,7 +161,7 @@ func TestUpdateBalance(t *testing.T) {
 		t.Error("Must not touch pool paid")
 	}
 
-	rank := r.client.ZRank(r.formatKey("payments:pending"), join("x", amount)).Val()
+	rank := r.client.ZRank(ctx, r.formatKey("payments:pending"), join("x", amount)).Val()
 	if rank != 0 {
 		t.Error("Must add pending payment")
 	}
@@ -168,19 +170,21 @@ func TestUpdateBalance(t *testing.T) {
 func TestRollbackBalance(t *testing.T) {
 	reset()
 
-	r.client.HMSetMap(
+	r.client.HSet(
+		ctx,
 		r.formatKey("miners:x"),
 		map[string]string{"paid": "100", "balance": "750", "pending": "250"},
 	)
-	r.client.HMSetMap(
+	r.client.HSet(
+		ctx,
 		r.formatKey("finances"),
 		map[string]string{"paid": "500", "balance": "10000", "pending": "250"},
 	)
-	r.client.ZAdd(r.formatKey("payments:pending"), redis.Z{Score: 1, Member: "xx"})
+	r.client.ZAdd(ctx, r.formatKey("payments:pending"), redis.Z{Score: 1, Member: "xx"})
 
 	amount := int64(250)
 	r.RollbackBalance("x", amount)
-	result := r.client.HGetAllMap(r.formatKey("miners:x")).Val()
+	result := r.client.HGetAll(ctx, r.formatKey("miners:x")).Val()
 	if result["paid"] != "100" {
 		t.Error("Must not touch paid")
 	}
@@ -191,7 +195,7 @@ func TestRollbackBalance(t *testing.T) {
 		t.Error("Must deduct pending")
 	}
 
-	result = r.client.HGetAllMap(r.formatKey("finances")).Val()
+	result = r.client.HGetAll(ctx, r.formatKey("finances")).Val()
 	if result["paid"] != "500" {
 		t.Error("Must not touch pool paid")
 	}
@@ -202,7 +206,7 @@ func TestRollbackBalance(t *testing.T) {
 		t.Error("Must deduct pool pending")
 	}
 
-	err := r.client.ZRank(r.formatKey("payments:pending"), join("x", amount)).Err()
+	err := r.client.ZRank(ctx, r.formatKey("payments:pending"), join("x", amount)).Err()
 	if err != redis.Nil {
 		t.Errorf("Must remove pending payment")
 	}
@@ -211,18 +215,20 @@ func TestRollbackBalance(t *testing.T) {
 func TestWritePayment(t *testing.T) {
 	reset()
 
-	r.client.HMSetMap(
+	r.client.HSet(
+		ctx,
 		r.formatKey("miners:x"),
 		map[string]string{"paid": "50", "balance": "1000", "pending": "250"},
 	)
-	r.client.HMSetMap(
+	r.client.HSet(
+		ctx,
 		r.formatKey("finances"),
 		map[string]string{"paid": "500", "balance": "10000", "pending": "250"},
 	)
 
 	amount := int64(250)
 	r.WritePayment("x", "0x0", amount)
-	result := r.client.HGetAllMap(r.formatKey("miners:x")).Val()
+	result := r.client.HGetAll(ctx, r.formatKey("miners:x")).Val()
 	if result["pending"] != "0" {
 		t.Error("Must unset pending amount")
 	}
@@ -233,7 +239,7 @@ func TestWritePayment(t *testing.T) {
 		t.Error("Must increase paid")
 	}
 
-	result = r.client.HGetAllMap(r.formatKey("finances")).Val()
+	result = r.client.HGetAll(ctx, r.formatKey("finances")).Val()
 	if result["pending"] != "0" {
 		t.Error("Must deduct pool pending amount")
 	}
@@ -244,20 +250,20 @@ func TestWritePayment(t *testing.T) {
 		t.Error("Must increase pool paid")
 	}
 
-	err := r.client.Get(r.formatKey("payments:lock")).Err()
+	err := r.client.Get(ctx, r.formatKey("payments:lock")).Err()
 	if err != redis.Nil {
 		t.Errorf("Must release lock")
 	}
 
-	err = r.client.ZRank(r.formatKey("payments:pending"), join("x", amount)).Err()
+	err = r.client.ZRank(ctx, r.formatKey("payments:pending"), join("x", amount)).Err()
 	if err != redis.Nil {
 		t.Error("Must remove pending payment")
 	}
-	err = r.client.ZRank(r.formatKey("payments:all"), join("0x0", "x", amount)).Err()
+	err = r.client.ZRank(ctx, r.formatKey("payments:all"), join("0x0", "x", amount)).Err()
 	if err == redis.Nil {
 		t.Error("Must add payment to set")
 	}
-	err = r.client.ZRank(r.formatKey("payments:x"), join("0x0", amount)).Err()
+	err = r.client.ZRank(ctx, r.formatKey("payments:x"), join("0x0", amount)).Err()
 	if err == redis.Nil {
 		t.Error("Must add payment to set")
 	}
@@ -266,7 +272,8 @@ func TestWritePayment(t *testing.T) {
 func TestGetPendingPayments(t *testing.T) {
 	reset()
 
-	r.client.HMSetMap(
+	r.client.HSet(
+		ctx,
 		r.formatKey("miners:x"),
 		map[string]string{"paid": "100", "balance": "750", "pending": "250"},
 	)
@@ -295,13 +302,13 @@ func TestCollectLuckStats(t *testing.T) {
 	members := []redis.Z{
 		redis.Z{Score: 0, Member: "1:0:0x0:0x0:0:100:100:0"},
 	}
-	r.client.ZAdd(r.formatKey("blocks:immature"), members...)
+	r.client.ZAdd(ctx, r.formatKey("blocks:immature"), members...)
 	members = []redis.Z{
 		redis.Z{Score: 1, Member: "1:0:0x2:0x0:0:50:100:0"},
 		redis.Z{Score: 2, Member: "0:1:0x1:0x0:0:100:100:0"},
 		redis.Z{Score: 3, Member: "0:0:0x3:0x0:0:200:100:0"},
 	}
-	r.client.ZAdd(r.formatKey("blocks:matured"), members...)
+	r.client.ZAdd(ctx, r.formatKey("blocks:matured"), members...)
 
 	stats, _ := r.CollectLuckStats([]int{1, 2, 5, 10})
 	expectedStats := map[string]interface{}{
@@ -322,8 +329,8 @@ func TestCollectLuckStats(t *testing.T) {
 }
 
 func reset() {
-	keys := r.client.Keys(r.prefix + ":*").Val()
+	keys := r.client.Keys(ctx, r.prefix+":*").Val()
 	for _, k := range keys {
-		r.client.Del(k)
+		r.client.Del(ctx, k)
 	}
 }
