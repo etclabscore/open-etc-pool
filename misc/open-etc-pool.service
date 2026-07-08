@@ -1,0 +1,37 @@
+# systemd unit for a plain (non-Nix, non-Docker) install — replaces the legacy
+# Upstart job. NixOS users should use the flake's nixosModules.default instead.
+#
+# Install:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin open-etc-pool
+#   sudo install -Dm755 build/bin/open-etc-pool /usr/local/bin/open-etc-pool
+#   sudo install -Dm644 config.json /etc/open-etc-pool/config.json
+#   sudo cp misc/open-etc-pool.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now open-etc-pool
+
+[Unit]
+Description=open-etc-pool — Ethereum Classic mining pool
+Documentation=https://github.com/etclabscore/open-etc-pool
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=open-etc-pool
+Group=open-etc-pool
+ExecStart=/usr/local/bin/open-etc-pool /etc/open-etc-pool/config.json
+Restart=on-failure
+RestartSec=5
+
+# Hardening — the pool keeps its state in Redis and needs no filesystem writes.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

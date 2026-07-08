@@ -1,0 +1,41 @@
+# Single-host deployment with Docker: the pool + its Redis.
+#
+#   1. cp config.example.json config.json
+#   2. In config.json:
+#        - set  redis.endpoint  to  "redis:6379"   (the Redis service below)
+#        - point "upstream", "unlocker.daemon" and "payouts.daemon" at your
+#          core-geth node ("http://host.docker.internal:8545" if it runs on
+#          the Docker host).
+#   3. docker compose up -d
+#
+# The image is built with Nix and published from CI. To use a locally-built
+# image instead: `nix build .#dockerImage && docker load < result` (loads it as
+# open-etc-pool:latest — adjust `image:` below).
+#
+# Run only ONE instance of the unlocker/payouts modules across a cluster.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  pool:
+    image: ghcr.io/etclabscore/open-etc-pool:latest
+    restart: unless-stopped
+    depends_on:
+      - redis
+    ports:
+      - "8888:8888"   # HTTP getwork
+      - "8008:8008"   # stratum
+      - "8080:8080"   # stats API
+    volumes:
+      - ./config.json:/config.json:ro
+    # Lets config.json reach a core-geth node running on the Docker host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  redis-data:
