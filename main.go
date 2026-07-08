@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"syscall"
 
 	"github.com/yvasiyarov/gorelic"
 
@@ -28,14 +32,14 @@ func startApi() {
 	s.Start()
 }
 
-func startBlockUnlocker() {
+func startBlockUnlocker(ctx context.Context) {
 	u := payouts.NewBlockUnlocker(&cfg.BlockUnlocker, backend, &cfg.Network)
-	u.Start()
+	u.Start(ctx)
 }
 
-func startPayoutsProcessor() {
+func startPayoutsProcessor(ctx context.Context) {
 	u := payouts.NewPayoutsProcessor(&cfg.Payouts, backend)
-	u.Start()
+	u.Start(ctx)
 }
 
 func startNewrelic() {
@@ -85,6 +89,15 @@ func main() {
 		log.Printf("Backend check reply: %v", pong)
 	}
 
+	// Shut down cleanly on SIGINT/SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// The proxy and API are network servers, torn down when the process exits.
+	// The block unlocker and payouts processor mutate balances, so we wait for
+	// them to finish the current cycle before exiting.
+	var wg sync.WaitGroup
+
 	if cfg.Proxy.Enabled {
 		go startProxy()
 	}
@@ -92,11 +105,23 @@ func main() {
 		go startApi()
 	}
 	if cfg.BlockUnlocker.Enabled {
-		go startBlockUnlocker()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			startBlockUnlocker(ctx)
+		}()
 	}
 	if cfg.Payouts.Enabled {
-		go startPayoutsProcessor()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			startPayoutsProcessor(ctx)
+		}()
 	}
-	quit := make(chan bool)
-	<-quit
+
+	<-ctx.Done()
+	stop() // a second signal terminates immediately
+	log.Println("Shutting down; waiting for unlocker/payouts to finish the current cycle...")
+	wg.Wait()
+	log.Println("Shutdown complete")
 }

@@ -1,6 +1,7 @@
 package payouts
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/big"
@@ -56,7 +57,7 @@ func NewPayoutsProcessor(cfg *PayoutsConfig, backend *storage.RedisClient) *Payo
 	return u
 }
 
-func (u *PayoutsProcessor) Start() {
+func (u *PayoutsProcessor) Start(ctx context.Context) {
 	log.Println("Starting payouts")
 
 	if u.mustResolvePayout() {
@@ -91,15 +92,17 @@ func (u *PayoutsProcessor) Start() {
 	u.process()
 	timer.Reset(intv)
 
-	go func() {
-		for {
-			select {
-			case <-timer.C:
-				u.process()
-				timer.Reset(intv)
-			}
+	for {
+		select {
+		case <-timer.C:
+			u.process()
+			timer.Reset(intv)
+		case <-ctx.Done():
+			log.Println("Stopping payouts")
+			timer.Stop()
+			return
 		}
-	}()
+	}
 }
 
 func (u *PayoutsProcessor) process() {
