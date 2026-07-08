@@ -1,15 +1,11 @@
-// +build go1.9
-
 package main
 
 import (
 	"encoding/json"
 	"log"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
-	"time"
 
 	"github.com/yvasiyarov/gorelic"
 
@@ -73,7 +69,6 @@ func readConfig(cfg *proxy.Config) {
 
 func main() {
 	readConfig(&cfg)
-	rand.Seed(time.Now().UnixNano())
 
 	if cfg.Threads > 0 {
 		runtime.GOMAXPROCS(cfg.Threads)
