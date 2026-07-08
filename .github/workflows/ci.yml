@@ -74,5 +74,11 @@ jobs:
       - name: Build OCI image
         run: nix build .#dockerImage -L
 
+      - name: Smoke-test image (loads into Docker)
+        run: |
+          docker load < result
+          docker image inspect open-etc-pool:latest \
+            --format 'entrypoint={{json .Config.Entrypoint}} ports={{json .Config.ExposedPorts}}'
+
       - name: Flake check
         run: nix flake check -L

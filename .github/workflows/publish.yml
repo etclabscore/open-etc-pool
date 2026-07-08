@@ -1,0 +1,59 @@
+name: Publish image
+
+# Build the OCI image with Nix and push it to the GitHub Container Registry.
+# Runs on pushes to master (:latest) and on version tags (:vX.Y.Z).
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build & push OCI image to ghcr.io
+    runs-on: ubuntu-latest
+    env:
+      NIX_CONFIG: "experimental-features = nix-command flakes"
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v35
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+
+      - name: Build OCI image with Nix
+        run: nix build .#dockerImage -L
+
+      - name: Load image into Docker
+        run: docker load < result
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Tag & push
+        run: |
+          set -euo pipefail
+          docker tag open-etc-pool:latest "$IMAGE:${GITHUB_SHA}"
+          docker push "$IMAGE:${GITHUB_SHA}"
+          if [ "${{ github.ref_type }}" = "branch" ]; then
+            docker tag open-etc-pool:latest "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            docker tag open-etc-pool:latest "$IMAGE:${{ github.ref_name }}"
+            docker push "$IMAGE:${{ github.ref_name }}"
+          fi
