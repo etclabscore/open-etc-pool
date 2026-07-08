@@ -45,3 +45,34 @@ jobs:
 
       - name: Test (unit + storage integration, with race detector)
         run: go test -race -cover ./...
+
+  nix:
+    name: Nix build (package + OCI image)
+    runs-on: ubuntu-latest
+    env:
+      NIX_CONFIG: "experimental-features = nix-command flakes"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v35
+
+      # Cache /nix/store across runs. Note: PRs from forks get a read-only
+      # cache token, so the cache is populated by pushes to master and merely
+      # restored on PRs.
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+
+      - name: Build package
+        run: nix build .#default -L
+
+      - name: Build OCI image
+        run: nix build .#dockerImage -L
+
+      - name: Flake check
+        run: nix flake check -L
