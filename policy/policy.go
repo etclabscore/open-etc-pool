@@ -233,6 +233,15 @@ func (s *PolicyServer) ApplySharePolicy(ip string, validShare bool) bool {
 		x.InvalidShares++
 	}
 
+	// The invalid-share ratio below only drives banning; when banning is off it
+	// can never ban, only reject the caller's response, so accept every share
+	// here (mirrors ApplyLimitPolicy's !Limits.Enabled short-circuit). Kept after
+	// the counters above so the Limits reward still applies when banning is off.
+	if !s.config.Banning.Enabled {
+		x.Unlock()
+		return true
+	}
+
 	totalShares := x.ValidShares + x.InvalidShares
 	if totalShares < s.config.Banning.CheckThreshold {
 		x.Unlock()
