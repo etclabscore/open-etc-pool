@@ -46,9 +46,19 @@ func (self PayoutsConfig) GasPriceHex() string {
 type PayoutsProcessor struct {
 	config   *PayoutsConfig
 	backend  *storage.RedisClient
-	rpc      *rpc.RPCClient
+	rpc      payerRPC
 	halt     bool
 	lastFail error
+}
+
+// payerRPC is the subset of *rpc.RPCClient the payouts processor uses, as an
+// interface so tests can inject failures.
+type payerRPC interface {
+	GetBalance(address string) (*big.Int, error)
+	Sign(from string, s string) (string, error)
+	GetPeerCount() (int64, error)
+	SendTransaction(from, to, gas, gasPrice, value string, autoGas bool) (string, error)
+	GetTxReceipt(hash string) (*rpc.TxReceipt, error)
 }
 
 func NewPayoutsProcessor(cfg *PayoutsConfig, backend *storage.RedisClient) *PayoutsProcessor {
@@ -140,18 +150,17 @@ func (u *PayoutsProcessor) process() {
 			break
 		}
 
-		// Check if we have enough funds
+		// Check if we have enough funds. These two checks are before any state
+		// mutation, so a transient failure retries next cycle instead of
+		// permanently halting payouts.
 		poolBalance, err := u.rpc.GetBalance(u.config.Address)
 		if err != nil {
-			u.halt = true
-			u.lastFail = err
+			log.Printf("Unable to get pool balance from node, retrying next cycle: %v", err)
 			break
 		}
 		if poolBalance.Cmp(amountInWei) < 0 {
-			err := fmt.Errorf("Not enough balance for payment, need %s Wei, pool has %s Wei",
+			log.Printf("Not enough pool balance for payment, need %s Wei, pool has %s Wei; retrying next cycle",
 				amountInWei.String(), poolBalance.String())
-			u.halt = true
-			u.lastFail = err
 			break
 		}
 
