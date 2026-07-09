@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="High profitability Ethereum Classic mining pool" />
+    <meta name="keywords" content="Ethereum Classic, ETC, pool, mining, etchash" />
+    <title>ETC Mining Pool</title>
+    <script>
+      // Apply a saved theme before first paint to avoid a flash; with no saved
+      // choice the CSS falls back to the system preference.
+      try {
+        var t = localStorage.getItem('theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
