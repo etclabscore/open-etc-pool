@@ -191,17 +191,25 @@ func (s *ProxyServer) broadcastNewJobs() {
 	}
 	reply := []string{t.Header, t.Seed, s.diff}
 
+	// Snapshot the sessions under the read lock, then broadcast outside it: the
+	// broadcast does slow network I/O, and its per-session goroutines call
+	// removeSession (write lock), so holding the read lock throughout would
+	// block register/removeSession for the whole broadcast.
 	s.sessionsMu.RLock()
-	defer s.sessionsMu.RUnlock()
+	sessions := make([]*Session, 0, len(s.sessions))
+	for m := range s.sessions {
+		sessions = append(sessions, m)
+	}
+	s.sessionsMu.RUnlock()
 
-	count := len(s.sessions)
+	count := len(sessions)
 	log.Printf("Broadcasting new job to %v stratum miners", count)
 
 	start := time.Now()
 	bcast := make(chan int, 1024)
 	n := 0
 
-	for m, _ := range s.sessions {
+	for _, m := range sessions {
 		n++
 		bcast <- n
 
