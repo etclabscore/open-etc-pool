@@ -296,13 +296,16 @@ func (self PayoutsProcessor) resolvePayouts() {
 			}
 			log.Printf("Credited %v Shannon back to %s", v.Amount, v.Address)
 		}
-		err := self.backend.UnlockPayouts()
-		if err != nil {
-			log.Println("Failed to unlock payouts:", err)
-			return
-		}
 	} else {
 		log.Println("No pending payments to resolve")
+	}
+
+	// Always clear the lock. A payout can leave it set with no pending payments
+	// (e.g. it crashed between locking and recording the debit); without clearing
+	// it here that stuck lock would block every future payout with no way out.
+	if err := self.backend.UnlockPayouts(); err != nil {
+		log.Println("Failed to unlock payouts:", err)
+		return
 	}
 
 	if self.config.BgSave {

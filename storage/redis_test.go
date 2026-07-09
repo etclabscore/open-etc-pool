@@ -4,6 +4,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -332,5 +333,42 @@ func reset() {
 	keys := r.client.Keys(ctx, r.prefix+":*").Val()
 	for _, k := range keys {
 		r.client.Del(ctx, k)
+	}
+}
+
+func TestLockPayoutsContention(t *testing.T) {
+	reset()
+
+	if err := r.LockPayouts("0xaa", 5); err != nil {
+		t.Fatalf("first lock should succeed: %v", err)
+	}
+	locked, err := r.IsPayoutsLocked()
+	if err != nil || !locked {
+		t.Fatalf("payouts should be locked: locked=%v err=%v", locked, err)
+	}
+	// A second lock while the first is held is genuine contention, not a
+	// backend failure.
+	if err := r.LockPayouts("0xbb", 7); err == nil {
+		t.Fatal("second lock should fail while the first is held")
+	}
+	if err := r.UnlockPayouts(); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	if locked, _ := r.IsPayoutsLocked(); locked {
+		t.Fatal("payouts should be unlocked after UnlockPayouts")
+	}
+}
+
+func TestLockPayoutsSurfacesBackendError(t *testing.T) {
+	// Pointed at a closed port, LockPayouts must return the real connection
+	// error, not the "Unable to acquire lock" contention message that swallowing
+	// the SetNX error with .Val() would have produced.
+	down := NewRedisClient(&Config{Endpoint: "127.0.0.1:1"}, prefix)
+	err := down.LockPayouts("0xaa", 5)
+	if err == nil {
+		t.Fatal("expected an error when the backend is unreachable")
+	}
+	if strings.Contains(err.Error(), "Unable to acquire lock") {
+		t.Fatalf("backend error masked as lock contention: %v", err)
 	}
 }
