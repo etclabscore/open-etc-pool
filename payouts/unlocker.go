@@ -41,11 +41,21 @@ var big8 = big.NewInt(8)
 var homesteadReward = math.MustParseBig256("5000000000000000000")
 
 type BlockUnlocker struct {
-	config   *UnlockerConfig
-	backend  *storage.RedisClient
-	rpc      *rpc.RPCClient
-	halt     bool
-	lastFail error
+	config      *UnlockerConfig
+	backend     *storage.RedisClient
+	rpc         unlockerRPC
+	halt        bool
+	lastFail    error
+	failsInARow int
+}
+
+// unlockerRPC is the subset of *rpc.RPCClient the unlocker uses. Declaring it
+// as an interface lets tests inject a client that fails on demand.
+type unlockerRPC interface {
+	GetPendingBlock() (*rpc.GetBlockReplyPart, error)
+	GetBlockByHeight(height int64) (*rpc.GetBlockReply, error)
+	GetUncleByBlockNumberAndIndex(height int64, index int) (*rpc.GetBlockReply, error)
+	GetTxReceipt(hash string) (*rpc.TxReceipt, error)
 }
 
 func NewBlockUnlocker(cfg *UnlockerConfig, backend *storage.RedisClient, network *string) *BlockUnlocker {
@@ -73,6 +83,11 @@ func NewBlockUnlocker(cfg *UnlockerConfig, backend *storage.RedisClient, network
 	return u
 }
 
+// maxUnlockFailsInARow re-suspends the unlocker after this many consecutive
+// failed cycles, so transient node/Redis blips self-heal but a persistently
+// wedged unlocker still surfaces and stops instead of retrying forever.
+const maxUnlockFailsInARow = 60
+
 func (u *BlockUnlocker) Start(ctx context.Context) {
 	log.Println("Starting block unlocker")
 	intv := util.MustParseDuration(u.config.Interval)
@@ -80,21 +95,43 @@ func (u *BlockUnlocker) Start(ctx context.Context) {
 	log.Printf("Set block unlock interval to %v", intv)
 
 	// Immediately unlock after start
-	u.unlockPendingBlocks()
-	u.unlockAndCreditMiners()
+	u.runCycle()
 	timer.Reset(intv)
 
 	for {
 		select {
 		case <-timer.C:
-			u.unlockPendingBlocks()
-			u.unlockAndCreditMiners()
+			u.runCycle()
 			timer.Reset(intv)
 		case <-ctx.Done():
 			log.Println("Stopping block unlocker")
 			timer.Stop()
 			return
 		}
+	}
+}
+
+// runCycle runs one unlock pass, recovering from a previous transient failure
+// unless too many cycles have failed in a row. Retrying is safe because each
+// block is credited and removed from the scanned zset in the SAME Redis
+// transaction (see storage.writeImmatureBlock / writeMaturedBlock), so a
+// re-scan after a failed cycle never re-credits an already-processed block.
+func (u *BlockUnlocker) runCycle() {
+	if u.halt {
+		if u.failsInARow >= maxUnlockFailsInARow {
+			log.Printf("Block unlocking suspended after %d consecutive failures; restart required. Last error: %v", u.failsInARow, u.lastFail)
+			return
+		}
+		u.halt = false
+	}
+
+	u.unlockPendingBlocks()
+	u.unlockAndCreditMiners()
+
+	if u.halt {
+		u.failsInARow++
+	} else {
+		u.failsInARow = 0
 	}
 }
 
