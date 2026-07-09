@@ -46,6 +46,35 @@ jobs:
       - name: Test (unit + storage integration, with race detector)
         run: go test -race -cover ./...
 
+  web:
+    name: Frontend (check, test & build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
   nix:
     name: Nix build (package + OCI image)
     runs-on: ubuntu-latest
