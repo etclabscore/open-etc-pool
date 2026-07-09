@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/etclabscore/go-etchash"
 	"github.com/ethereum/go-ethereum/common"
@@ -13,19 +14,32 @@ import (
 var ecip1099FBlockClassic uint64 = 11700000 // classic mainnet
 var ecip1099FBlockMordor uint64 = 2520000   // mordor
 
-var hasher *etchash.Etchash = nil
+var (
+	hasher     *etchash.Etchash
+	hasherOnce sync.Once
+)
+
+// getHasher builds the Etchash verifier once, safely under concurrent share
+// submissions (this was previously an unsynchronized nil-check + assignment on
+// a package global — a data race).
+func getHasher(network string) *etchash.Etchash {
+	hasherOnce.Do(func() {
+		switch network {
+		case "classic":
+			hasher = etchash.New(&ecip1099FBlockClassic, nil)
+		case "mordor":
+			hasher = etchash.New(&ecip1099FBlockMordor, nil)
+		default:
+			log.Printf("Unknown network configuration %s", network)
+		}
+	})
+	return hasher
+}
 
 func (s *ProxyServer) processShare(login, id, ip string, t *BlockTemplate, params []string) (bool, bool) {
-	if hasher == nil {
-		if s.config.Network == "classic" {
-			hasher = etchash.New(&ecip1099FBlockClassic, nil)
-		} else if s.config.Network == "mordor" {
-			hasher = etchash.New(&ecip1099FBlockMordor, nil)
-		} else {
-			// unknown network
-			log.Printf("Unknown network configuration %s", s.config.Network)
-			return false, false
-		}
+	verifier := getHasher(s.config.Network)
+	if verifier == nil {
+		return false, false
 	}
 	nonceHex := params[0]
 	hashNoNonce := params[1]
@@ -55,11 +69,11 @@ func (s *ProxyServer) processShare(login, id, ip string, t *BlockTemplate, param
 		mixDigest:   common.HexToHash(mixDigest),
 	}
 
-	if !hasher.Verify(share) {
+	if !verifier.Verify(share) {
 		return false, false
 	}
 
-	if hasher.Verify(block) {
+	if verifier.Verify(block) {
 		ok, err := s.rpc().SubmitBlock(params)
 		if err != nil {
 			log.Printf("Block submission failure at height %v for %v: %v", h.height, t.Header, err)
