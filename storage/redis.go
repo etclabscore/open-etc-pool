@@ -344,8 +344,11 @@ func (r *RedisClient) GetBalance(login string) (int64, error) {
 
 func (r *RedisClient) LockPayouts(login string, amount int64) error {
 	key := r.formatKey("payments", "lock")
-	result := r.client.SetNX(ctx, key, join(login, amount), 0).Val()
-	if !result {
+	acquired, err := r.client.SetNX(ctx, key, join(login, amount), 0).Result()
+	if err != nil {
+		return err
+	}
+	if !acquired {
 		return fmt.Errorf("Unable to acquire lock '%s'", key)
 	}
 	return nil
