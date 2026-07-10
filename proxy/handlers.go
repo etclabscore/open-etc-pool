@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/etclabscore/open-etc-pool/metrics"
 	"github.com/etclabscore/open-etc-pool/rpc"
 	"github.com/etclabscore/open-etc-pool/util"
 )
@@ -59,12 +60,14 @@ func (s *ProxyServer) handleSubmitRPC(cs *Session, login, id string, params []st
 	}
 	if len(params) != 3 {
 		s.policy.ApplyMalformedPolicy(cs.ip)
+		metrics.ShareOutcome(metrics.ShareMalformed)
 		log.Printf("Malformed params from %s@%s %v", login, cs.ip, params)
 		return false, &ErrorReply{Code: -1, Message: "Invalid params"}
 	}
 
 	if !noncePattern.MatchString(params[0]) || !hashPattern.MatchString(params[1]) || !hashPattern.MatchString(params[2]) {
 		s.policy.ApplyMalformedPolicy(cs.ip)
+		metrics.ShareOutcome(metrics.ShareMalformed)
 		log.Printf("Malformed PoW result from %s@%s %v", login, cs.ip, params)
 		return false, &ErrorReply{Code: -1, Message: "Malformed PoW result"}
 	}

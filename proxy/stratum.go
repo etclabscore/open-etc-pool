@@ -9,6 +9,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/etclabscore/open-etc-pool/metrics"
 	"github.com/etclabscore/open-etc-pool/util"
 )
 
@@ -176,12 +177,14 @@ func (s *ProxyServer) registerSession(cs *Session) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	s.sessions[cs] = struct{}{}
+	metrics.StratumSessions.Set(float64(len(s.sessions)))
 }
 
 func (s *ProxyServer) removeSession(cs *Session) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	delete(s.sessions, cs)
+	metrics.StratumSessions.Set(float64(len(s.sessions)))
 }
 
 func (s *ProxyServer) broadcastNewJobs() {

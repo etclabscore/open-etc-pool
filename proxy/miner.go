@@ -9,6 +9,8 @@ import (
 
 	"github.com/etclabscore/go-etchash"
 	"github.com/ethereum/go-ethereum/common"
+
+	"github.com/etclabscore/open-etc-pool/metrics"
 )
 
 var ecip1099FBlockClassic uint64 = 11700000 // classic mainnet
@@ -50,6 +52,7 @@ func (s *ProxyServer) processShare(login, id, ip string, t *BlockTemplate, param
 	h, ok := t.headers[hashNoNonce]
 	if !ok {
 		log.Printf("Stale share from %v@%v", login, ip)
+		metrics.ShareOutcome(metrics.ShareStale)
 		return false, false
 	}
 
@@ -70,20 +73,25 @@ func (s *ProxyServer) processShare(login, id, ip string, t *BlockTemplate, param
 	}
 
 	if !verifier.Verify(share) {
+		metrics.ShareOutcome(metrics.ShareInvalid)
 		return false, false
 	}
 
 	if verifier.Verify(block) {
 		ok, err := s.rpc().SubmitBlock(params)
 		if err != nil {
+			metrics.BlockSubmissions.WithLabelValues(metrics.SubmitError).Inc()
 			log.Printf("Block submission failure at height %v for %v: %v", h.height, t.Header, err)
 		} else if !ok {
+			metrics.BlockSubmissions.WithLabelValues(metrics.SubmitRejected).Inc()
 			log.Printf("Block rejected at height %v for %v", h.height, t.Header)
 			return false, false
 		} else {
+			metrics.BlockSubmissions.WithLabelValues(metrics.SubmitAccepted).Inc()
 			s.fetchBlockTemplate()
 			exist, err := s.backend.WriteBlock(login, id, params, shareDiff, h.diff.Int64(), h.height, s.hashrateExpiration)
 			if exist {
+				metrics.ShareOutcome(metrics.ShareDuplicate)
 				return true, false
 			}
 			if err != nil {
@@ -91,16 +99,19 @@ func (s *ProxyServer) processShare(login, id, ip string, t *BlockTemplate, param
 			} else {
 				log.Printf("Inserted block %v to backend", h.height)
 			}
+			metrics.BlocksFound.Inc()
 			log.Printf("Block found by miner %v@%v at height %d", login, ip, h.height)
 		}
 	} else {
 		exist, err := s.backend.WriteShare(login, id, params, shareDiff, h.height, s.hashrateExpiration)
 		if exist {
+			metrics.ShareOutcome(metrics.ShareDuplicate)
 			return true, false
 		}
 		if err != nil {
 			log.Println("Failed to insert share data into backend:", err)
 		}
 	}
+	metrics.ShareOutcome(metrics.ShareValid)
 	return false, true
 }
