@@ -512,7 +512,10 @@ func (u *BlockUnlocker) calculateRewards(block *storage.BlockData) (*big.Rat, *b
 		return nil, nil, nil, nil, err
 	}
 
-	rewards := calculateRewardsForShares(shares, block.TotalShares, minersProfit)
+	rewards, err := calculateRewardsForShares(shares, block.TotalShares, minersProfit)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 
 	if block.ExtraReward != nil {
 		extraReward := new(big.Rat).SetInt(block.ExtraReward)
@@ -522,21 +525,29 @@ func (u *BlockUnlocker) calculateRewards(block *storage.BlockData) (*big.Rat, *b
 
 	if len(u.config.PoolFeeAddress) != 0 {
 		address := strings.ToLower(u.config.PoolFeeAddress)
-		rewards[address] += weiToShannonInt64(poolProfit)
+		poolFee, err := weiToShannonInt64(poolProfit)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		rewards[address] += poolFee
 	}
 
 	return revenue, minersProfit, poolProfit, rewards, nil
 }
 
-func calculateRewardsForShares(shares map[string]int64, total int64, reward *big.Rat) map[string]int64 {
+func calculateRewardsForShares(shares map[string]int64, total int64, reward *big.Rat) (map[string]int64, error) {
 	rewards := make(map[string]int64)
 
 	for login, n := range shares {
 		percent := big.NewRat(n, total)
 		workerReward := new(big.Rat).Mul(reward, percent)
-		rewards[login] += weiToShannonInt64(workerReward)
+		value, err := weiToShannonInt64(workerReward)
+		if err != nil {
+			return nil, fmt.Errorf("worker %s: %w", login, err)
+		}
+		rewards[login] += value
 	}
-	return rewards
+	return rewards, nil
 }
 
 // Returns new value after fee deduction and fee value.
@@ -546,11 +557,18 @@ func chargeFee(value *big.Rat, fee float64) (*big.Rat, *big.Rat) {
 	return new(big.Rat).Sub(value, feeValue), feeValue
 }
 
-func weiToShannonInt64(wei *big.Rat) int64 {
+func weiToShannonInt64(wei *big.Rat) (int64, error) {
 	shannon := new(big.Rat).SetInt(util.Shannon)
 	inShannon := new(big.Rat).Quo(wei, shannon)
-	value, _ := strconv.ParseInt(inShannon.FloatString(0), 10, 64)
-	return value
+	str := inShannon.FloatString(0)
+	// Guard the conversion: with ETC amounts a reward always fits int64 Shannon,
+	// but if it ever didn't, ParseInt would clamp and silently corrupt a balance.
+	// Fail loudly instead so the caller halts the round rather than crediting it.
+	value, err := strconv.ParseInt(str, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("reward %s Shannon does not fit in int64: %w", str, err)
+	}
+	return value, nil
 }
 
 // GetRewardByEra gets a block reward at disinflation rate.
