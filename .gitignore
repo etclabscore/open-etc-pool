@@ -2,5 +2,4 @@
 config.json
 testnet.json
 
-/build/_workspace/
-/build/bin/
+/open-etc-pool
