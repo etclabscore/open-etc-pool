@@ -20,51 +20,52 @@ If any of checks fails, module will not even try to continue.
 
 If payments can't be locked (another lock exist, usually after a failure) module will halt payouts.
 
-* Deduct balance of a miner and log pending payment
-* Submit a transaction to a node via `eth_sendTransaction`
+* Read the pool account nonce (via `eth_getTransactionCount`) and record it
+* Deduct the miner's balance and log a pending payment
+* Submit the transaction via `eth_sendTransaction`
+* Record the returned TX hash, then move the payment from pending to paid and unlock
 
-**If transaction submission fails, payouts will remain locked and halted in erroneous state.**
+The nonce is recorded **before** the transaction is sent, so an interrupted payout
+can later be reconciled against the chain without double-paying (see below).
 
-If transaction submission was successful, we have a TX hash:
-
-* Write this TX hash to a database
-* Unlock payouts
+**If transaction submission fails, payouts remain locked and halted** until you
+resolve them. On the next normal start the module also refuses to run while any
+pending payment exists.
 
 And so on. Repeat for every account.
 
 After payout session, payment module will perform `BGSAVE` (background saving) on Redis if you have enabled `bgsave` option.
 
-## Resolving Failed Payments (automatic)
+## Resolving Locked Payouts (automatic)
 
-If your payout is not logged and not confirmed by Ethereum network you can resolve it automatically. You need to payouts in maintenance mode by setting up `RESOLVE_PAYOUT=1` or `RESOLVE_PAYOUT=True` environment variable:
+If a payout was interrupted, restart the payouts module in maintenance mode with
+the `RESOLVE_PAYOUT=1` (or `RESOLVE_PAYOUT=True`) environment variable:
 
-`RESOLVE_PAYOUT=1 ./build/bin/open-etc-pool payouts.json`.
+`RESOLVE_PAYOUT=1 ./open-etc-pool payouts.json`.
 
-Payout module will fetch all rows from Redis with key `eth:payments:pending` and credit balance back to miners. Usually you will have only single entry there.
+It fetches the pending payment(s) from `<coin>:payments:pending` — normally a
+single entry — and **reconciles each against the chain instead of blindly
+crediting it back**, so it never double-pays a payout that was actually broadcast:
 
-If you see `No pending payments to resolve` we have no data about failed debits.
+* Using the recorded **nonce**, it checks `eth_getTransactionCount`:
+  * nonce **mined** → the payout went out → recorded as paid (credited back only
+    if the transaction reverted on-chain);
+  * nonce **still in the mempool** → left in place; re-run `RESOLVE_PAYOUT=1` once
+    it mines;
+  * nonce **never used** → nothing was sent → balance credited back.
+* For payments recorded before this version (no nonce), it falls back to the
+  recorded TX hash: present (and not reverted) → treated as paid; absent →
+  credited back.
 
-If there was a debit operation performed which is not followed by actual money transfer (after `eth_sendTransaction` returned an error), you will likely see:
-
-```
-Will credit back following balances:
-Address: 0xb85150eb365e7df0941f0cf08235f987ba91506a, Amount: 166798415 Shannon, 2016-05-11 08:14:34
-```
-
-followed by
-
-```
-Credited 166798415 Shannon back to 0xb85150eb365e7df0941f0cf08235f987ba91506a
-```
-
-Usually every maintenance run ends with following message and halt:
+`No pending payments to resolve` means there is nothing to fix. When it finishes
+it unlocks payouts and halts:
 
 ```
 Payouts unlocked
 Now you have to restart payouts module with RESOLVE_PAYOUT=0 for normal run
 ```
 
-Unset `RESOLVE_PAYOUT=1` or run payouts with `RESOLVE_PAYOUT=0`.
+Then run payouts normally again (unset `RESOLVE_PAYOUT` or set `RESOLVE_PAYOUT=0`).
 
 ## Resolving Failed Payment (manual)
 
