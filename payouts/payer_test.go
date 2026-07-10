@@ -18,6 +18,9 @@ type fakePayerRPC struct {
 	sendTxErr      error
 	receipt        *rpc.TxReceipt
 	receiptErr     error
+	txCountLatest  uint64
+	txCountPending uint64
+	txCountErr     error
 }
 
 func (f *fakePayerRPC) GetPeerCount() (int64, error)         { return f.peers, nil }
@@ -27,6 +30,15 @@ func (f *fakePayerRPC) SendTransaction(from, to, gas, gasPrice, value string, au
 	return "0xtxhash", f.sendTxErr
 }
 func (f *fakePayerRPC) GetTxReceipt(hash string) (*rpc.TxReceipt, error) { return f.receipt, f.receiptErr }
+func (f *fakePayerRPC) GetTxCount(addr, tag string) (uint64, error) {
+	if f.txCountErr != nil {
+		return 0, f.txCountErr
+	}
+	if tag == "pending" {
+		return f.txCountPending, nil
+	}
+	return f.txCountLatest, nil
+}
 
 const payerPrefix = "test-payer"
 

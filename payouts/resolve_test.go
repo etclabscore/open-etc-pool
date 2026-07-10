@@ -125,6 +125,78 @@ func TestResolvePayoutsDoesNotCreditBackAlreadyBroadcast(t *testing.T) {
 	}
 }
 
+// With a recorded nonce, a payout whose nonce was mined is treated as paid (not
+// credited back) regardless of whether the tx hash made it to Redis.
+func TestResolvePayoutsPaidWhenNonceMined(t *testing.T) {
+	backend := resolveBackend(t)
+	const login, amount = "0xe1", int64(500)
+	seedStuckPayout(t, backend, login, amount, "0xhash")
+	if err := backend.SetPendingPaymentNonce(login, amount, 5); err != nil {
+		t.Fatalf("SetPendingPaymentNonce: %v", err)
+	}
+	// nonce 5 mined (latest 6).
+	proc := &PayoutsProcessor{config: &PayoutsConfig{BgSave: false}, backend: backend,
+		rpc: &fakePayerRPC{txCountLatest: 6, txCountPending: 6}}
+	proc.resolvePayouts()
+
+	if bal, _ := backend.GetBalance(login); bal != 0 {
+		t.Fatalf("balance = %d, want 0 (a mined nonce means paid)", bal)
+	}
+	if paid := minerField(t, backend, login, "paid"); paid != amount {
+		t.Fatalf("paid = %d, want %d", paid, amount)
+	}
+	if locked, _ := backend.IsPayoutsLocked(); locked {
+		t.Fatal("lock not cleared")
+	}
+}
+
+// A recorded nonce that is neither mined nor pending means the payout never
+// broadcast, so the balance is credited back.
+func TestResolvePayoutsCreditsBackWhenNonceUnused(t *testing.T) {
+	backend := resolveBackend(t)
+	const login, amount = "0xe2", int64(600)
+	seedStuckPayout(t, backend, login, amount, "")
+	if err := backend.SetPendingPaymentNonce(login, amount, 5); err != nil {
+		t.Fatalf("SetPendingPaymentNonce: %v", err)
+	}
+	// nonce 5 unused (latest 5, pending 5).
+	proc := &PayoutsProcessor{config: &PayoutsConfig{BgSave: false}, backend: backend,
+		rpc: &fakePayerRPC{txCountLatest: 5, txCountPending: 5}}
+	proc.resolvePayouts()
+
+	if bal, _ := backend.GetBalance(login); bal != amount {
+		t.Fatalf("balance = %d, want %d credited back", bal, amount)
+	}
+	if locked, _ := backend.IsPayoutsLocked(); locked {
+		t.Fatal("lock not cleared")
+	}
+}
+
+// A payout still in the mempool at its nonce is left untouched (and the lock
+// held) for a later re-run, never credited back.
+func TestResolvePayoutsLeavesInMempoolPayout(t *testing.T) {
+	backend := resolveBackend(t)
+	const login, amount = "0xe3", int64(700)
+	seedStuckPayout(t, backend, login, amount, "0xhash")
+	if err := backend.SetPendingPaymentNonce(login, amount, 5); err != nil {
+		t.Fatalf("SetPendingPaymentNonce: %v", err)
+	}
+	// nonce 5 not mined (latest 5) but in the mempool (pending 6).
+	proc := &PayoutsProcessor{config: &PayoutsConfig{BgSave: false}, backend: backend,
+		rpc: &fakePayerRPC{txCountLatest: 5, txCountPending: 6}}
+	proc.resolvePayouts()
+
+	if bal, _ := backend.GetBalance(login); bal != 0 {
+		t.Fatalf("balance = %d, want 0 (an in-mempool payout must not be credited back)", bal)
+	}
+	if p := backend.GetPendingPayments(); len(p) != 1 {
+		t.Fatalf("the pending payout should be left in place, got %d", len(p))
+	}
+	if locked, _ := backend.IsPayoutsLocked(); !locked {
+		t.Fatal("lock should be left held so the operator can re-run resolve")
+	}
+}
+
 // A payout whose tx was broadcast but provably reverted on-chain moved no value,
 // so the balance is credited back.
 func TestResolvePayoutsCreditsBackWhenTxReverted(t *testing.T) {

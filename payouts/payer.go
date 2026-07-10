@@ -59,6 +59,7 @@ type payerRPC interface {
 	GetPeerCount() (int64, error)
 	SendTransaction(from, to, gas, gasPrice, value string, autoGas bool) (string, error)
 	GetTxReceipt(hash string) (*rpc.TxReceipt, error)
+	GetTxCount(address, tag string) (uint64, error)
 }
 
 func NewPayoutsProcessor(cfg *PayoutsConfig, backend *storage.RedisClient) *PayoutsProcessor {
@@ -164,6 +165,17 @@ func (u *PayoutsProcessor) process() {
 			break
 		}
 
+		// Read the nonce the node will assign to this payout up front (still
+		// pre-mutation, so a failure just retries next cycle). The pool is the
+		// only sender and this payout is the next tx, so this nonce is stable
+		// until we send; recording it lets resolvePayouts reconcile a crashed
+		// payout against the chain.
+		nonce, err := u.rpc.GetTxCount(u.config.Address, "pending")
+		if err != nil {
+			log.Printf("Unable to read pool account nonce, retrying next cycle: %v", err)
+			break
+		}
+
 		// Lock payments for current payout
 		err = u.backend.LockPayouts(login, amount)
 		if err != nil {
@@ -178,6 +190,15 @@ func (u *PayoutsProcessor) process() {
 		err = u.backend.UpdateBalance(login, amount)
 		if err != nil {
 			log.Printf("Failed to update balance for %s, %v Shannon: %v", login, amount, err)
+			u.halt = true
+			u.lastFail = err
+			break
+		}
+
+		// Record the payout nonce before broadcasting, so a crash any time after
+		// the send can be reconciled against the chain without double-paying.
+		if err = u.backend.SetPendingPaymentNonce(login, amount, nonce); err != nil {
+			log.Printf("Failed to record payout nonce for %s: %v", login, err)
 			u.halt = true
 			u.lastFail = err
 			break
@@ -300,14 +321,36 @@ func (self PayoutsProcessor) resolvePayouts() {
 		log.Printf("Resolving %v pending payment(s):\n%s", len(payments), formatPendingPayments(payments))
 
 		for _, v := range payments {
+			nonce, hasNonce, err := self.backend.GetPendingPaymentNonce(v.Address, v.Amount)
+			if err != nil {
+				log.Printf("Failed to read payout nonce for %s, leaving it for manual resolution: %v", v.Address, err)
+				return
+			}
 			txHash, err := self.backend.GetPendingPaymentTx(v.Address, v.Amount)
 			if err != nil {
 				log.Printf("Failed to read pending tx for %s, leaving it for manual resolution: %v", v.Address, err)
 				return
 			}
 
-			// No tx was ever broadcast (crash before or during send), so the
-			// payout never left the pool and the balance can be credited back.
+			// The recorded nonce is authoritative: the pool is the only sender, so
+			// whether the node consumed it tells us if the payout tx went out.
+			if hasNonce {
+				done, err := self.reconcileByNonce(v, nonce, txHash)
+				if err != nil {
+					log.Printf("Failed to reconcile payout for %s, leaving it for manual resolution: %v", v.Address, err)
+					return
+				}
+				if !done {
+					// Broadcast, still in the mempool at this nonce — not resolvable
+					// yet. Leave the payout (and the lock) as is; re-run once it mines.
+					log.Printf("Payout to %s (nonce %d) is still pending in the mempool; leave it and re-run RESOLVE_PAYOUT after it mines", v.Address, nonce)
+					return
+				}
+				continue
+			}
+
+			// Legacy record with no nonce (pre-upgrade, or a crash before the nonce
+			// was written, in which case nothing was sent). Fall back to the tx hash.
 			if txHash == "" {
 				if err := self.backend.RollbackBalance(v.Address, v.Amount); err != nil {
 					log.Printf("Failed to credit %v Shannon back to %s: %v", v.Amount, v.Address, err)
@@ -316,12 +359,7 @@ func (self PayoutsProcessor) resolvePayouts() {
 				log.Printf("Credited %v Shannon back to %s (no payout tx was broadcast)", v.Amount, v.Address)
 				continue
 			}
-
-			// A payout tx was broadcast. Only credit back if it provably reverted
-			// on-chain; when it succeeded, is still pending, or can't be checked,
-			// treat it as paid so an already-sent payout is never double-paid.
-			receipt, err := self.rpc.GetTxReceipt(txHash)
-			if err == nil && receipt != nil && receipt.Confirmed() && !receipt.Successful() {
+			if self.txReverted(txHash) {
 				if err := self.backend.RollbackBalance(v.Address, v.Amount); err != nil {
 					log.Printf("Failed to credit %v Shannon back to %s: %v", v.Amount, v.Address, err)
 					return
@@ -351,6 +389,53 @@ func (self PayoutsProcessor) resolvePayouts() {
 		self.bgSave()
 	}
 	log.Println("Payouts unlocked")
+}
+
+// reconcileByNonce resolves a pending payout from its recorded nonce. It returns
+// done=false only when the payout tx is still in the mempool at that nonce, in
+// which case the caller must leave the payout untouched for a later re-run.
+func (self PayoutsProcessor) reconcileByNonce(v *storage.PendingPayment, nonce uint64, txHash string) (bool, error) {
+	latest, err := self.rpc.GetTxCount(self.config.Address, "latest")
+	if err != nil {
+		return false, err
+	}
+	if latest > nonce {
+		// The tx at our nonce was mined, so the payout went out. Credit back only
+		// if it provably reverted (no value moved); otherwise record it as paid.
+		if txHash != "" && self.txReverted(txHash) {
+			if err := self.backend.RollbackBalance(v.Address, v.Amount); err != nil {
+				return false, err
+			}
+			log.Printf("Credited %v Shannon back to %s (payout tx %s reverted on-chain)", v.Amount, v.Address, txHash)
+			return true, nil
+		}
+		if err := self.backend.WritePayment(v.Address, txHash, v.Amount); err != nil {
+			return false, err
+		}
+		log.Printf("Recorded %v Shannon to %s as paid (nonce %d mined, tx %s); not crediting back", v.Amount, v.Address, nonce, txHash)
+		return true, nil
+	}
+
+	pending, err := self.rpc.GetTxCount(self.config.Address, "pending")
+	if err != nil {
+		return false, err
+	}
+	if pending > nonce {
+		return false, nil // broadcast, still sitting in the mempool at this nonce
+	}
+
+	// Neither mined nor pending at this nonce: the payout was never broadcast (or
+	// was dropped), so the balance is credited back and re-sent next cycle.
+	if err := self.backend.RollbackBalance(v.Address, v.Amount); err != nil {
+		return false, err
+	}
+	log.Printf("Credited %v Shannon back to %s (no tx at nonce %d; not broadcast)", v.Amount, v.Address, nonce)
+	return true, nil
+}
+
+func (self PayoutsProcessor) txReverted(txHash string) bool {
+	receipt, err := self.rpc.GetTxReceipt(txHash)
+	return err == nil && receipt != nil && receipt.Confirmed() && !receipt.Successful()
 }
 
 func (self PayoutsProcessor) mustResolvePayout() bool {
