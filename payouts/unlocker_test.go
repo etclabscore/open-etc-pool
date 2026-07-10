@@ -1,11 +1,14 @@
 package payouts
 
 import (
-	"github.com/etclabscore/open-etc-pool/rpc"
-	"github.com/etclabscore/open-etc-pool/storage"
+	"math"
 	"math/big"
 	"os"
 	"testing"
+
+	"github.com/etclabscore/open-etc-pool/rpc"
+	"github.com/etclabscore/open-etc-pool/storage"
+	"github.com/etclabscore/open-etc-pool/util"
 )
 
 func TestMain(m *testing.M) {
@@ -18,7 +21,10 @@ func TestCalculateRewards(t *testing.T) {
 	expectedRewards := map[string]int64{"0x0": 4877996431, "0x1": 97559929, "0x2": 24389982, "0x3": 48780, "0x4": 4878}
 	totalShares := int64(1025011)
 
-	rewards := calculateRewardsForShares(shares, totalShares, blockReward)
+	rewards, err := calculateRewardsForShares(shares, totalShares, blockReward)
+	if err != nil {
+		t.Fatalf("calculateRewardsForShares: %v", err)
+	}
 	expectedTotalAmount := int64(5000000000)
 
 	totalAmount := int64(0)
@@ -57,11 +63,36 @@ func TestWeiToShannonInt64(t *testing.T) {
 	origWei, _ := new(big.Rat).SetString("1000000000000000000")
 	shannon := int64(1000000000)
 
-	if weiToShannonInt64(wei) != shannon {
+	got, err := weiToShannonInt64(wei)
+	if err != nil {
+		t.Fatalf("weiToShannonInt64: %v", err)
+	}
+	if got != shannon {
 		t.Error("Must convert to Shannon")
 	}
 	if wei.Cmp(origWei) != 0 {
 		t.Error("Must charge original value")
+	}
+}
+
+func TestWeiToShannonInt64Overflow(t *testing.T) {
+	// (MaxInt64 + 1) Shannon, expressed in Wei, cannot fit int64 Shannon.
+	overflowShannon := new(big.Int).Add(big.NewInt(math.MaxInt64), big.NewInt(1))
+	wei := new(big.Rat).SetInt(new(big.Int).Mul(overflowShannon, util.Shannon))
+
+	if _, err := weiToShannonInt64(wei); err == nil {
+		t.Fatal("expected an overflow error for a reward exceeding int64 Shannon")
+	}
+}
+
+func TestCalculateRewardsForSharesOverflow(t *testing.T) {
+	// A block reward so large a single share's cut overflows int64 Shannon must
+	// surface an error rather than silently clamping a miner's balance.
+	overflowShannon := new(big.Int).Add(big.NewInt(math.MaxInt64), big.NewInt(1))
+	reward := new(big.Rat).SetInt(new(big.Int).Mul(overflowShannon, util.Shannon))
+
+	if _, err := calculateRewardsForShares(map[string]int64{"0xaa": 1}, 1, reward); err == nil {
+		t.Fatal("expected an overflow error from calculateRewardsForShares")
 	}
 }
 
