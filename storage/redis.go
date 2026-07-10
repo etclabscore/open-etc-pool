@@ -423,6 +423,7 @@ func (r *RedisClient) RollbackBalance(login string, amount int64) error {
 		tx.HIncrBy(ctx, r.formatKey("finances"), "pending", (amount * -1))
 		tx.ZRem(ctx, r.formatKey("payments", "pending"), join(login, amount))
 		tx.HDel(ctx, r.formatKey("payments", "pendingtx"), join(login, amount))
+		tx.HDel(ctx, r.formatKey("payments", "pendingnonce"), join(login, amount))
 		return nil
 	})
 	return err
@@ -459,10 +460,33 @@ func (r *RedisClient) WritePayment(login, txHash string, amount int64) error {
 		tx.ZAdd(ctx, r.formatKey("payments", login), redis.Z{Score: float64(ts), Member: join(txHash, amount)})
 		tx.ZRem(ctx, r.formatKey("payments", "pending"), join(login, amount))
 		tx.HDel(ctx, r.formatKey("payments", "pendingtx"), join(login, amount))
+		tx.HDel(ctx, r.formatKey("payments", "pendingnonce"), join(login, amount))
 		tx.Del(ctx, r.formatKey("payments", "lock"))
 		return nil
 	})
 	return err
+}
+
+// SetPendingPaymentNonce records the pool account nonce assigned to the in-flight
+// payout, written before the tx is broadcast. resolvePayouts reconciles it
+// against the chain: since the pool is the only sender, whether that nonce was
+// consumed reliably says whether the payout tx went out.
+func (r *RedisClient) SetPendingPaymentNonce(login string, amount int64, nonce uint64) error {
+	return r.client.HSet(ctx, r.formatKey("payments", "pendingnonce"), join(login, amount), strconv.FormatUint(nonce, 10)).Err()
+}
+
+// GetPendingPaymentNonce returns the recorded payout nonce, and false if none was
+// recorded (a pre-upgrade record, or a crash before the nonce was written).
+func (r *RedisClient) GetPendingPaymentNonce(login string, amount int64) (uint64, bool, error) {
+	v, err := r.client.HGet(ctx, r.formatKey("payments", "pendingnonce"), join(login, amount)).Result()
+	if err == redis.Nil {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	nonce, err := strconv.ParseUint(v, 10, 64)
+	return nonce, true, err
 }
 
 func (r *RedisClient) WriteImmatureBlock(block *BlockData, roundRewards map[string]int64) error {

@@ -204,6 +204,24 @@ func (r *RPCClient) Sign(from string, s string) (string, error) {
 	return reply, err
 }
 
+// GetTxCount returns the transaction count (next nonce) of an address at the
+// given block tag ("latest" or "pending"). The payer uses it to reconcile a
+// crashed payout against the chain.
+func (r *RPCClient) GetTxCount(address, tag string) (uint64, error) {
+	rpcResp, err := r.doPost(r.Url, "eth_getTransactionCount", []string{address, tag})
+	if err != nil {
+		return 0, err
+	}
+	if rpcResp.Result == nil {
+		return 0, errors.New("eth_getTransactionCount returned no result")
+	}
+	var reply string
+	if err := json.Unmarshal(*rpcResp.Result, &reply); err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimPrefix(reply, "0x"), 16, 64)
+}
+
 func (r *RPCClient) GetPeerCount() (int64, error) {
 	rpcResp, err := r.doPost(r.Url, "net_peerCount", nil)
 	if err != nil {

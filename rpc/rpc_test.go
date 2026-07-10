@@ -58,6 +58,17 @@ func TestNullBodyReturnsErrorNotPanic(t *testing.T) {
 	}
 }
 
+func TestGetTxCount(t *testing.T) {
+	c := mockNode(t, `{"jsonrpc":"2.0","id":0,"result":"0x2a"}`)
+	n, err := c.GetTxCount("0x0", "pending")
+	if err != nil {
+		t.Fatalf("GetTxCount: %v", err)
+	}
+	if n != 42 {
+		t.Fatalf("nonce = %d, want 42", n)
+	}
+}
+
 func TestGetWorkValid(t *testing.T) {
 	c := mockNode(t, `{"jsonrpc":"2.0","id":0,"result":["0xheader","0xseed","0xtarget"]}`)
 	work, err := c.GetWork()
