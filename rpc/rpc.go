@@ -93,6 +93,9 @@ func (r *RPCClient) GetWork() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if rpcResp.Result == nil {
+		return nil, errors.New("eth_getWork returned no result")
+	}
 	var reply []string
 	err = json.Unmarshal(*rpcResp.Result, &reply)
 	return reply, err
@@ -157,6 +160,9 @@ func (r *RPCClient) SubmitBlock(params []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if rpcResp.Result == nil {
+		return false, errors.New("eth_submitWork returned no result")
+	}
 	var reply bool
 	err = json.Unmarshal(*rpcResp.Result, &reply)
 	return reply, err
@@ -166,6 +172,9 @@ func (r *RPCClient) GetBalance(address string) (*big.Int, error) {
 	rpcResp, err := r.doPost(r.Url, "eth_getBalance", []string{address, "latest"})
 	if err != nil {
 		return nil, err
+	}
+	if rpcResp.Result == nil {
+		return nil, errors.New("eth_getBalance returned no result")
 	}
 	var reply string
 	err = json.Unmarshal(*rpcResp.Result, &reply)
@@ -182,6 +191,9 @@ func (r *RPCClient) Sign(from string, s string) (string, error) {
 	if err != nil {
 		return reply, err
 	}
+	if rpcResp.Result == nil {
+		return reply, errors.New("eth_sign returned no result")
+	}
 	err = json.Unmarshal(*rpcResp.Result, &reply)
 	if err != nil {
 		return reply, err
@@ -196,6 +208,9 @@ func (r *RPCClient) GetPeerCount() (int64, error) {
 	rpcResp, err := r.doPost(r.Url, "net_peerCount", nil)
 	if err != nil {
 		return 0, err
+	}
+	if rpcResp.Result == nil {
+		return 0, errors.New("net_peerCount returned no result")
 	}
 	var reply string
 	err = json.Unmarshal(*rpcResp.Result, &reply)
@@ -219,6 +234,9 @@ func (r *RPCClient) SendTransaction(from, to, gas, gasPrice, value string, autoG
 	var reply string
 	if err != nil {
 		return reply, err
+	}
+	if rpcResp.Result == nil {
+		return reply, errors.New("eth_sendTransaction returned no result")
 	}
 	err = json.Unmarshal(*rpcResp.Result, &reply)
 	if err != nil {
@@ -262,7 +280,10 @@ func (r *RPCClient) doPost(url string, method string, params interface{}) (*JSON
 	}
 	if rpcResp.Error != nil {
 		r.markSick()
-		return nil, errors.New(rpcResp.Error["message"].(string))
+		if msg, ok := rpcResp.Error["message"].(string); ok {
+			return nil, errors.New(msg)
+		}
+		return nil, fmt.Errorf("rpc error: %v", rpcResp.Error)
 	}
 	return rpcResp, err
 }
