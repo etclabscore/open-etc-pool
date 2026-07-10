@@ -512,7 +512,16 @@ func (u *BlockUnlocker) calculateRewards(block *storage.BlockData) (*big.Rat, *b
 		return nil, nil, nil, nil, err
 	}
 
-	rewards, err := calculateRewardsForShares(shares, block.TotalShares, minersProfit)
+	// Use the actual sum of round shares as the reward denominator rather than
+	// the block's cached TotalShares, so per-miner rewards always sum to exactly
+	// the block reward. This decouples payouts from the cached value, which lets
+	// WriteBlock record the candidate atomically with the round rename.
+	var totalShares int64
+	for _, n := range shares {
+		totalShares += n
+	}
+
+	rewards, err := calculateRewardsForShares(shares, totalShares, minersProfit)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -537,6 +546,16 @@ func (u *BlockUnlocker) calculateRewards(block *storage.BlockData) (*big.Rat, *b
 
 func calculateRewardsForShares(shares map[string]int64, total int64, reward *big.Rat) (map[string]int64, error) {
 	rewards := make(map[string]int64)
+
+	// Guard against a zero/negative denominator (corrupted round data): with
+	// shares present it would panic in big.NewRat; with none there is nothing to
+	// distribute.
+	if total <= 0 {
+		if len(shares) == 0 {
+			return rewards, nil
+		}
+		return nil, fmt.Errorf("cannot distribute reward over %d total shares", total)
+	}
 
 	for login, n := range shares {
 		percent := big.NewRat(n, total)

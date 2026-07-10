@@ -40,6 +40,19 @@ func TestCalculateRewards(t *testing.T) {
 	}
 }
 
+func TestCalculateRewardsForSharesZeroTotal(t *testing.T) {
+	reward, _ := new(big.Rat).SetString("5000000000000000000")
+	// Non-empty shares with a zero denominator must error, not panic in big.NewRat.
+	if _, err := calculateRewardsForShares(map[string]int64{"0x0": 1}, 0, reward); err == nil {
+		t.Fatal("expected an error for a zero total with shares present")
+	}
+	// No shares and a zero total is simply a no-op.
+	rewards, err := calculateRewardsForShares(map[string]int64{}, 0, reward)
+	if err != nil || len(rewards) != 0 {
+		t.Fatalf("empty shares: rewards=%v err=%v", rewards, err)
+	}
+}
+
 func TestChargeFee(t *testing.T) {
 	orig, _ := new(big.Rat).SetString("5000000000000000000")
 	value, _ := new(big.Rat).SetString("5000000000000000000")

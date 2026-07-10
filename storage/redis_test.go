@@ -6,9 +6,56 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+func TestWriteBlockRecordsCandidateAtomically(t *testing.T) {
+	reset()
+	// A round in progress.
+	r.client.HSet(ctx, r.formatKey("shares", "roundCurrent"), "0xaa", 100, "0xbb", 50)
+	r.client.HSet(ctx, r.formatKey("stats"), "roundShares", 150)
+
+	params := []string{"0xnonce", "0xpow", "0xmix"}
+	exist, err := r.WriteBlock("0xcc", "rig", params, 10, 1000, 42, time.Hour)
+	if err != nil || exist {
+		t.Fatalf("WriteBlock: exist=%v err=%v", exist, err)
+	}
+
+	// The round was renamed with the solver's own share added; roundCurrent gone.
+	shares, _ := r.GetRoundShares(42, "0xnonce")
+	if shares["0xaa"] != 100 || shares["0xbb"] != 50 || shares["0xcc"] != 10 {
+		t.Fatalf("round shares after block = %v", shares)
+	}
+	if n, _ := r.client.Exists(ctx, r.formatKey("shares", "roundCurrent")).Result(); n != 0 {
+		t.Fatal("roundCurrent should have been renamed away")
+	}
+
+	// The candidate was recorded atomically with totalShares = the round sum.
+	cands, err := r.GetCandidates(100)
+	if err != nil {
+		t.Fatalf("GetCandidates: %v", err)
+	}
+	if len(cands) != 1 {
+		t.Fatalf("want 1 candidate, got %d", len(cands))
+	}
+	c := cands[0]
+	if c.Height != 42 || c.Nonce != "0xnonce" || c.Difficulty != 1000 {
+		t.Fatalf("candidate mismatch: %+v", c)
+	}
+	if c.TotalShares != 160 {
+		t.Fatalf("candidate TotalShares = %d, want 160 (100+50+10)", c.TotalShares)
+	}
+
+	// roundShares cleared and blocksFound incremented.
+	if ok, _ := r.client.HExists(ctx, r.formatKey("stats"), "roundShares").Result(); ok {
+		t.Fatal("roundShares should have been deleted")
+	}
+	if bf, _ := r.client.HGet(ctx, r.formatKey("miners", "0xcc"), "blocksFound").Int64(); bf != 1 {
+		t.Fatalf("blocksFound = %d, want 1", bf)
+	}
+}
 
 var r *RedisClient
 
