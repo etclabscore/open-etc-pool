@@ -278,6 +278,12 @@ func (r *RPCClient) doPost(url string, method string, params interface{}) (*JSON
 		r.markSick()
 		return nil, err
 	}
+	// A whole-body JSON null decodes without error but leaves rpcResp nil, so
+	// guard before dereferencing it (a bad/hostile node must not panic the pool).
+	if rpcResp == nil {
+		r.markSick()
+		return nil, errors.New("empty rpc response")
+	}
 	if rpcResp.Error != nil {
 		r.markSick()
 		if msg, ok := rpcResp.Error["message"].(string); ok {
