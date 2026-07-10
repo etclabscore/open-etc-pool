@@ -42,9 +42,20 @@ func (f *fakePayerRPC) GetTxCount(addr, tag string) (uint64, error) {
 
 const payerPrefix = "test-payer"
 
+// requireRedis skips the calling test when the local Redis these
+// integration-style tests need isn't reachable, instead of failing on the
+// first backend operation.
+func requireRedis(t *testing.T, backend *storage.RedisClient) {
+	t.Helper()
+	if _, err := backend.Check(); err != nil {
+		t.Skipf("Redis not available, skipping: %v", err)
+	}
+}
+
 func newTestPayer(t *testing.T, fake payerRPC) *PayoutsProcessor {
 	t.Helper()
 	backend := storage.NewRedisClient(&storage.Config{Endpoint: "127.0.0.1:6379"}, payerPrefix)
+	requireRedis(t, backend)
 
 	ctx := context.Background()
 	if keys, _ := backend.Client().Keys(ctx, payerPrefix+":*").Result(); len(keys) > 0 {

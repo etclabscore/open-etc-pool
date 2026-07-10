@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -63,6 +64,12 @@ const prefix = "test"
 
 func TestMain(m *testing.M) {
 	r = NewRedisClient(&Config{Endpoint: "127.0.0.1:6379"}, prefix)
+	// Every test in this package needs Redis; skip the whole package (rather
+	// than panicking on empty results) when it isn't reachable.
+	if _, err := r.Check(); err != nil {
+		log.Printf("Redis not available on 127.0.0.1:6379, skipping storage tests: %v", err)
+		os.Exit(0)
+	}
 	reset()
 	c := m.Run()
 	reset()

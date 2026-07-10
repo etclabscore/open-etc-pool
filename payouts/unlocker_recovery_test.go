@@ -30,9 +30,11 @@ func (f *fakeUnlockerRPC) GetUncleByBlockNumberAndIndex(int64, int) (*rpc.GetBlo
 
 func (f *fakeUnlockerRPC) GetTxReceipt(string) (*rpc.TxReceipt, error) { return nil, nil }
 
-func newTestUnlocker(rpcClient unlockerRPC) *BlockUnlocker {
+func newTestUnlocker(t *testing.T, rpcClient unlockerRPC) *BlockUnlocker {
+	t.Helper()
 	network := "classic"
 	backend := storage.NewRedisClient(&storage.Config{Endpoint: "127.0.0.1:6379"}, "test-unlock-recover")
+	requireRedis(t, backend)
 	u := NewBlockUnlocker(&UnlockerConfig{
 		Interval:      "1h",
 		Depth:         120,
@@ -48,7 +50,7 @@ func newTestUnlocker(rpcClient unlockerRPC) *BlockUnlocker {
 // node is reachable again.
 func TestUnlockerRecoversFromTransientError(t *testing.T) {
 	fake := &fakeUnlockerRPC{}
-	u := newTestUnlocker(fake)
+	u := newTestUnlocker(t, fake)
 
 	fake.pendingErr = errors.New("node unreachable")
 	u.runCycle()
@@ -73,7 +75,7 @@ func TestUnlockerRecoversFromTransientError(t *testing.T) {
 // (a restart is required) instead of looping forever on a wedged node.
 func TestUnlockerRelatchesAfterPersistentFailure(t *testing.T) {
 	fake := &fakeUnlockerRPC{pendingErr: errors.New("wedged")}
-	u := newTestUnlocker(fake)
+	u := newTestUnlocker(t, fake)
 
 	for i := 0; i < maxUnlockFailsInARow; i++ {
 		u.runCycle()

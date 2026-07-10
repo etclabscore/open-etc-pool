@@ -43,6 +43,9 @@ func TestAccountIndexBackendError(t *testing.T) {
 // A miner that does not exist, with a healthy backend, is a genuine 404.
 func TestAccountIndexNotFound(t *testing.T) {
 	s := newTestServer("127.0.0.1:6379")
+	if _, err := s.backend.Check(); err != nil {
+		t.Skipf("Redis not available, skipping: %v", err)
+	}
 	rec := httptest.NewRecorder()
 	s.AccountIndex(rec, accountRequest(testAddr))
 	if rec.Code != http.StatusNotFound {
