@@ -22,6 +22,7 @@ ETC is Proof-of-Work (Etchash) and absorbed large GPU hashrate after Ethereum's
 - Ban / rate-limit policy module
 - Read-only JSON API (`/api/stats`, `/api/accounts/:login`, `/api/blocks`, `/api/miners`, `/api/payments`)
 - Prometheus `/metrics` endpoint (shares, blocks, upstream health, stratum sessions)
+- Pool and per-miner 24h hashrate charts (dependency-free, CSP-safe)
 - Modern Svelte + Vite frontend with light/dark themes
 
 ## Architecture
