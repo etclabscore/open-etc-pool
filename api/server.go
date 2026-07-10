@@ -45,6 +45,24 @@ type Entry struct {
 	updatedAt int64
 }
 
+// Chart series are sampled at most this often and kept for this window.
+const (
+	chartSampleInterval = 10 * time.Minute
+	chartWindow         = 24 * time.Hour
+)
+
+func toInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	}
+	return 0
+}
+
 func NewApiServer(cfg *ApiConfig, backend *storage.RedisClient) *ApiServer {
 	hashrateWindow := util.MustParseDuration(cfg.HashrateWindow)
 	hashrateLargeWindow := util.MustParseDuration(cfg.HashrateLargeWindow)
@@ -147,6 +165,12 @@ func (s *ApiServer) collectStats() {
 		}
 	}
 	s.stats.Store(stats)
+
+	// Sample the pool hashrate/miners time series for the charts.
+	if err := s.backend.WritePoolChart(util.MakeTimestamp()/1000, toInt64(stats["hashrate"]), toInt64(stats["minersTotal"]), chartSampleInterval, chartWindow); err != nil {
+		log.Printf("Failed to write pool chart: %v", err)
+	}
+
 	log.Printf("Stats collection finished %s", time.Since(start))
 }
 
@@ -173,6 +197,7 @@ func (s *ApiServer) StatsIndex(w http.ResponseWriter, r *http.Request) {
 		reply["immatureTotal"] = stats["immatureTotal"]
 		reply["candidatesTotal"] = stats["candidatesTotal"]
 	}
+	reply["poolCharts"] = s.backend.GetPoolChart()
 
 	err = json.NewEncoder(w).Encode(reply)
 	if err != nil {
@@ -291,6 +316,13 @@ func (s *ApiServer) AccountIndex(w http.ResponseWriter, r *http.Request) {
 		stats[key] = value
 	}
 	stats["pageSize"] = s.config.Payments
+
+	// Sample this miner's hashrate for its chart, then attach the series.
+	if err := s.backend.WriteMinerChart(login, now/1000, toInt64(stats["currentHashrate"]), chartSampleInterval, chartWindow); err != nil {
+		log.Printf("Failed to write miner chart: %v", err)
+	}
+	stats["charts"] = s.backend.GetMinerChart(login)
+
 	reply = &Entry{stats: stats, updatedAt: now}
 
 	// Store, and evict entries that have long gone stale so the cache stays

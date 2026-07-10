@@ -161,6 +161,63 @@ func (r *RedisClient) GetNodeStates() ([]map[string]interface{}, error) {
 	return v, nil
 }
 
+// chartSample appends a time-series point (a ":"-joined tuple scored by ts) no
+// more often than sampleInterval, and trims the series to window.
+func (r *RedisClient) chartSample(key string, ts int64, member string, sampleInterval, window time.Duration, expire bool) error {
+	if newest := r.client.ZRevRangeWithScores(ctx, key, 0, 0).Val(); len(newest) > 0 {
+		if ts-int64(newest[0].Score) < int64(sampleInterval.Seconds()) {
+			return nil
+		}
+	}
+	_, err := r.client.TxPipelined(ctx, func(tx redis.Pipeliner) error {
+		tx.ZAdd(ctx, key, redis.Z{Score: float64(ts), Member: member})
+		tx.ZRemRangeByScore(ctx, key, "-inf", fmt.Sprint("(", ts-int64(window.Seconds())))
+		if expire {
+			tx.Expire(ctx, key, window*2)
+		}
+		return nil
+	})
+	return err
+}
+
+func chartPoints(cmd *redis.ZSliceCmd, fields ...string) []map[string]interface{} {
+	out := []map[string]interface{}{}
+	for _, z := range cmd.Val() {
+		parts := strings.Split(z.Member.(string), ":")
+		if len(parts) < len(fields) {
+			continue
+		}
+		point := make(map[string]interface{}, len(fields))
+		for i, name := range fields {
+			n, _ := strconv.ParseInt(parts[i], 10, 64)
+			point[name] = n
+		}
+		out = append(out, point)
+	}
+	return out
+}
+
+// WritePoolChart records a pool-wide sample (hashrate, miners online) at ts.
+func (r *RedisClient) WritePoolChart(ts, hashrate, miners int64, sampleInterval, window time.Duration) error {
+	return r.chartSample(r.formatKey("charts", "pool"), ts, join(ts, hashrate, miners), sampleInterval, window, false)
+}
+
+// GetPoolChart returns the pool chart samples, oldest first.
+func (r *RedisClient) GetPoolChart() []map[string]interface{} {
+	return chartPoints(r.client.ZRangeWithScores(ctx, r.formatKey("charts", "pool"), 0, -1), "x", "hashrate", "minersOnline")
+}
+
+// WriteMinerChart records a per-miner hashrate sample at ts. The key expires so
+// an inactive miner's series is reclaimed.
+func (r *RedisClient) WriteMinerChart(login string, ts, hashrate int64, sampleInterval, window time.Duration) error {
+	return r.chartSample(r.formatKey("charts", "miner", login), ts, join(ts, hashrate), sampleInterval, window, true)
+}
+
+// GetMinerChart returns a miner's hashrate samples, oldest first.
+func (r *RedisClient) GetMinerChart(login string) []map[string]interface{} {
+	return chartPoints(r.client.ZRangeWithScores(ctx, r.formatKey("charts", "miner", login), 0, -1), "x", "hashrate")
+}
+
 func (r *RedisClient) checkPoWExist(height uint64, params []string) (bool, error) {
 	// Sweep PoW backlog for previous blocks, we have 3 templates back in RAM.
 	// Skip when height <= 8 so height-8 doesn't underflow (uint64) to a huge score

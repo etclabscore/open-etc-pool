@@ -52,6 +52,13 @@ export interface Worker {
 export type PoolStats = Record<string, number | string>;
 export type Luck = Record<string, { luck: number; uncleRate: number; orphanRate: number }>;
 
+// One time-series sample. x is unix seconds; the rest depend on the series.
+export interface ChartPoint {
+  x: number;
+  hashrate: number;
+  minersOnline?: number;
+}
+
 export interface StatsResponse {
   nodes: NodeState[];
   now?: number;
@@ -61,6 +68,7 @@ export interface StatsResponse {
   maturedTotal?: number;
   immatureTotal?: number;
   candidatesTotal?: number;
+  poolCharts?: ChartPoint[];
 }
 
 export interface MinersResponse {
@@ -99,4 +107,5 @@ export interface AccountResponse {
   hashrate: number; // Σ hr2 (3h)
   currentHashrate: number; // Σ hr (30m)
   pageSize: number;
+  charts?: ChartPoint[];
 }
