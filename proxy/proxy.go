@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/etclabscore/open-etc-pool/metrics"
 	"github.com/etclabscore/open-etc-pool/policy"
 	"github.com/etclabscore/open-etc-pool/rpc"
 	"github.com/etclabscore/open-etc-pool/storage"
@@ -158,7 +159,9 @@ func (s *ProxyServer) checkUpstreams() {
 	backup := false
 
 	for i, v := range s.upstreams {
-		if v.Check() && !backup {
+		ok := v.Check()
+		metrics.SetUpstreamHealthy(v.Url, ok)
+		if ok && !backup {
 			candidate = int32(i)
 			backup = true
 		}
