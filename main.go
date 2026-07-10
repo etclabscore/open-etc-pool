@@ -15,10 +15,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/etclabscore/open-etc-pool/api"
+	"github.com/etclabscore/open-etc-pool/metrics"
 	"github.com/etclabscore/open-etc-pool/payouts"
 	"github.com/etclabscore/open-etc-pool/proxy"
 	"github.com/etclabscore/open-etc-pool/storage"
 )
+
+// version is stamped at build time via -ldflags "-X main.version=...".
+// It stays "dev" for a plain `go build`.
+var version = "dev"
 
 var cfg proxy.Config
 var backend *storage.RedisClient
@@ -80,6 +85,9 @@ func readConfig(cfg *proxy.Config) {
 }
 
 func main() {
+	log.Printf("open-etc-pool %s", version)
+	metrics.SetBuildInfo(version)
+
 	readConfig(&cfg)
 
 	if cfg.Threads > 0 {
