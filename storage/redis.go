@@ -200,30 +200,34 @@ func (r *RedisClient) WriteBlock(login, id string, params []string, diff, roundD
 	ms := util.MakeTimestamp()
 	ts := ms / 1000
 
-	cmds, err := r.client.TxPipelined(ctx, func(tx redis.Pipeliner) error {
+	// Approximate the round's total shares for the candidate's (display-only)
+	// shares field: read the round before the pipeline and add this share. The
+	// unlocker recomputes the exact reward denominator from the round hash, so
+	// this value never affects payouts. Computing it here lets the candidate be
+	// inserted inside the same transaction that renames the round, so a crash
+	// can't consume the round without recording the found block.
+	roundCurrent, err := r.client.HGetAll(ctx, r.formatKey("shares", "roundCurrent")).Result()
+	if err != nil {
+		return false, err
+	}
+	totalShares := diff
+	for _, v := range roundCurrent {
+		n, _ := strconv.ParseInt(v, 10, 64)
+		totalShares += n
+	}
+	candidate := join(strings.Join(params, ":"), ts, roundDiff, totalShares)
+
+	_, err = r.client.TxPipelined(ctx, func(tx redis.Pipeliner) error {
 		r.writeShare(tx, ms, ts, login, id, diff, window)
 		tx.HSet(ctx, r.formatKey("stats"), "lastBlockFound", strconv.FormatInt(ts, 10))
 		tx.HDel(ctx, r.formatKey("stats"), "roundShares")
 		tx.ZIncrBy(ctx, r.formatKey("finders"), 1, login)
 		tx.HIncrBy(ctx, r.formatKey("miners", login), "blocksFound", 1)
 		tx.Rename(ctx, r.formatKey("shares", "roundCurrent"), r.formatRound(int64(height), params[0]))
-		tx.HGetAll(ctx, r.formatRound(int64(height), params[0]))
+		tx.ZAdd(ctx, r.formatKey("blocks", "candidates"), redis.Z{Score: float64(height), Member: candidate})
 		return nil
 	})
-	if err != nil {
-		return false, err
-	} else {
-		sharesMap, _ := cmds[10].(*redis.MapStringStringCmd).Result()
-		totalShares := int64(0)
-		for _, v := range sharesMap {
-			n, _ := strconv.ParseInt(v, 10, 64)
-			totalShares += n
-		}
-		hashHex := strings.Join(params, ":")
-		s := join(hashHex, ts, roundDiff, totalShares)
-		cmd := r.client.ZAdd(ctx, r.formatKey("blocks", "candidates"), redis.Z{Score: float64(height), Member: s})
-		return false, cmd.Err()
-	}
+	return false, err
 }
 
 func (r *RedisClient) writeShare(tx redis.Pipeliner, ms, ts int64, login, id string, diff int64, expire time.Duration) {
