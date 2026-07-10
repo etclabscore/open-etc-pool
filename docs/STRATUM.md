@@ -141,3 +141,15 @@ Pool MAY return exception on invalid share submission usually followed by tempor
 ```javascript
 { "id": 1, "jsonrpc": "2.0", "result": true }
 ```
+
+## NiceHash (not supported)
+
+This pool speaks the eth-proxy style protocol described above (`eth_submitLogin`
+/ `eth_getWork` / `eth_submitWork`). It does **not** implement the
+`EthereumStratum/1.0.0` variant NiceHash uses (`mining.subscribe` /
+`mining.authorize` with extranonce subscription and `mining.set_difficulty` /
+`mining.notify` jobs).
+
+The `stratum_nice_hash` block in `config.example.json` is a placeholder: no
+NiceHash listener is started for it. Enabling it logs a warning and otherwise
+has no effect. NiceHash-compatible stratum is tracked as a future addition.

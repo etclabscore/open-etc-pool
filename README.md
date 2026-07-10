@@ -130,6 +130,14 @@ Domain docs: [PAYOUTS](docs/PAYOUTS.md) · [POLICIES](docs/POLICIES.md) · [STRA
 - If `poolFeeAddress` is unset, pool profit stays on the coinbase address; if set,
   keep a little dust on it for gas.
 
+## Limitations
+
+- **PROP payouts only** — no SOLO or PPLNS scheme yet.
+- **No NiceHash support** — the pool speaks the eth-proxy stratum protocol, not
+  the `EthereumStratum/1.0.0` variant NiceHash uses; the `stratum_nice_hash`
+  config block is a placeholder (see [`docs/STRATUM.md`](docs/STRATUM.md)).
+- **No exchange price feed** — balances are shown in ETC, not fiat.
+
 ## Mordor (testnet)
 
 Set `network` to `mordor` in the pool config, and `network` to `mordor` in
