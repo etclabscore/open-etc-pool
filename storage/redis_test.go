@@ -376,6 +376,19 @@ func TestCollectLuckStats(t *testing.T) {
 	}
 }
 
+func TestCheckPoWExistLowHeightDedup(t *testing.T) {
+	reset()
+	params := []string{"0xn", "0xp", "0xm"}
+	// height 3 (< 8): the backlog sweep must be skipped so a uint64 underflow
+	// doesn't prune the dedup entry, and the duplicate is still detected.
+	if exist, err := r.checkPoWExist(3, params); err != nil || exist {
+		t.Fatalf("first submit at height 3: exist=%v err=%v", exist, err)
+	}
+	if exist, err := r.checkPoWExist(3, params); err != nil || !exist {
+		t.Fatalf("duplicate submit at height 3 must be detected: exist=%v err=%v", exist, err)
+	}
+}
+
 func reset() {
 	keys := r.client.Keys(ctx, r.prefix+":*").Val()
 	for _, k := range keys {

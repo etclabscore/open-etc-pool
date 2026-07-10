@@ -76,6 +76,9 @@ func NewProxy(cfg *Config, backend *storage.RedisClient) *ProxyServer {
 		proxy.sessions = make(map[*Session]struct{})
 		go proxy.ListenTCP()
 	}
+	if cfg.Proxy.StratumNiceHash.Enabled {
+		log.Println("Warning: stratum_nice_hash is enabled in config, but the NiceHash stratum protocol is not implemented; no NiceHash listener is started")
+	}
 
 	proxy.fetchBlockTemplate()
 
