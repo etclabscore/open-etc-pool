@@ -186,9 +186,18 @@ func (s *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *ProxyServer) remoteAddr(r *http.Request) string {
 	if s.config.Proxy.BehindReverseProxy {
-		ip := r.Header.Get("X-Forwarded-For")
-		if len(ip) > 0 && net.ParseIP(ip) != nil {
-			return ip
+		// Trust only the rightmost X-Forwarded-For entry: it is the address our
+		// own reverse proxy appended for the peer that connected to it. Entries
+		// to the left are supplied by the client and therefore spoofable — using
+		// them lets a miner evade bans and, worse, drive the ipset ban of an
+		// arbitrary victim IP. This assumes a single trusted proxy that appends
+		// XFF (nginx's $proxy_add_x_forwarded_for).
+		if xff := r.Header.Get("X-Forwarded-For"); len(xff) > 0 {
+			parts := strings.Split(xff, ",")
+			ip := strings.TrimSpace(parts[len(parts)-1])
+			if net.ParseIP(ip) != nil {
+				return ip
+			}
 		}
 	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
