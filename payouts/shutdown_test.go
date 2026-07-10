@@ -30,6 +30,7 @@ func assertStartReturns(t *testing.T, name string, start func()) {
 
 func TestBlockUnlockerStopsOnContextCancel(t *testing.T) {
 	backend := storage.NewRedisClient(&storage.Config{Endpoint: "127.0.0.1:6379"}, "test-graceful-unlocker")
+	requireRedis(t, backend)
 	network := "classic"
 	u := NewBlockUnlocker(&UnlockerConfig{
 		Interval:      "1h",
@@ -46,6 +47,7 @@ func TestBlockUnlockerStopsOnContextCancel(t *testing.T) {
 
 func TestPayoutsProcessorStopsOnContextCancel(t *testing.T) {
 	backend := storage.NewRedisClient(&storage.Config{Endpoint: "127.0.0.1:6379"}, "test-graceful-payer")
+	requireRedis(t, backend)
 	u := NewPayoutsProcessor(&PayoutsConfig{
 		Interval: "1h",
 		Daemon:   "http://127.0.0.1:1",
