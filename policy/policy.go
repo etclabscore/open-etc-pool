@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os/exec"
@@ -12,6 +13,14 @@ import (
 	"github.com/etclabscore/open-etc-pool/storage"
 	"github.com/etclabscore/open-etc-pool/util"
 )
+
+// maxStatsEntries caps the per-IP stats map so a flood of distinct source IPs
+// can't grow it without bound between reset sweeps.
+const maxStatsEntries = 100000
+
+// banCmdTimeout bounds the external `ipset` command so a hung invocation can't
+// stall the ban workers (and, in turn, every ban-triggering request).
+const banCmdTimeout = 5 * time.Second
 
 type Config struct {
 	Workers         int     `json:"workers"`
@@ -170,13 +179,28 @@ func (s *PolicyServer) Get(ip string) *Stats {
 	s.statsMu.Lock()
 	defer s.statsMu.Unlock()
 
-	if x, ok := s.stats[ip]; !ok {
-		x = s.NewStats()
-		s.stats[ip] = x
-		return x
-	} else {
+	if x, ok := s.stats[ip]; ok {
 		x.heartbeat()
 		return x
+	}
+	// New IP. Keep the map bounded: when it reaches the cap, drop entries that
+	// have been idle past the reset window before adding another.
+	if len(s.stats) >= maxStatsEntries {
+		s.evictIdleLocked()
+	}
+	x := s.NewStats()
+	s.stats[ip] = x
+	return x
+}
+
+// evictIdleLocked removes stats for IPs idle past the reset window, keeping
+// banned entries. The caller must hold statsMu.
+func (s *PolicyServer) evictIdleLocked() {
+	now := util.MakeTimestamp()
+	for key, m := range s.stats {
+		if atomic.LoadInt32(&m.Banned) == 0 && now-atomic.LoadInt64(&m.LastBeat) >= s.timeout {
+			delete(s.stats, key)
+		}
 	}
 }
 
@@ -186,7 +210,15 @@ func (s *PolicyServer) BanClient(ip string) {
 }
 
 func (s *PolicyServer) IsBanned(ip string) bool {
-	x := s.Get(ip)
+	// A read-only lookup: an IP with no stats can't be banned, so don't allocate
+	// an entry here. IsBanned runs first on every connection, so allocating would
+	// let unseen IPs (including ones we immediately drop) grow the stats map.
+	s.statsMu.Lock()
+	x, ok := s.stats[ip]
+	s.statsMu.Unlock()
+	if !ok {
+		return false
+	}
 	return atomic.LoadInt32(&x.Banned) > 0
 }
 
@@ -252,6 +284,9 @@ func (s *PolicyServer) ApplySharePolicy(ip string, validShare bool) bool {
 	x.resetShares()
 	x.Unlock()
 
+	// invalidPercent is compared against invalid/valid, not invalid/total. Since
+	// a share was just counted above, validShares+invalidShares >= 1, so with no
+	// valid shares this is +Inf and bans (all-invalid), never 0/0.
 	ratio := invalidShares / validShares
 
 	if ratio >= s.config.Banning.InvalidPercent/100.0 {
@@ -314,7 +349,9 @@ func (s *PolicyServer) doBan(ip string) {
 
 	log.Printf("Banned %v with timeout %v on ipset %s", ip, timeout, set)
 
-	_, err := exec.Command(head, args...).Output()
+	cmdCtx, cancel := context.WithTimeout(context.Background(), banCmdTimeout)
+	defer cancel()
+	_, err := exec.CommandContext(cmdCtx, head, args...).Output()
 	if err != nil {
 		log.Printf("CMD Error: %s", err)
 	}

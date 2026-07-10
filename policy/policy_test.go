@@ -1,6 +1,40 @@
 package policy
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/etclabscore/open-etc-pool/util"
+)
+
+func TestIsBannedDoesNotAllocate(t *testing.T) {
+	s := &PolicyServer{config: &Config{}, stats: make(map[string]*Stats)}
+	if s.IsBanned("1.2.3.4") {
+		t.Fatal("an unknown IP must not be reported as banned")
+	}
+	if len(s.stats) != 0 {
+		t.Fatalf("IsBanned allocated a stats entry for an unknown IP (%d entries)", len(s.stats))
+	}
+}
+
+func TestEvictIdleStats(t *testing.T) {
+	now := util.MakeTimestamp()
+	s := &PolicyServer{config: &Config{}, stats: make(map[string]*Stats), timeout: 1000}
+	s.stats["idle"] = &Stats{LastBeat: now - 5000}             // idle past the window
+	s.stats["fresh"] = &Stats{LastBeat: now}                   // recently active
+	s.stats["banned"] = &Stats{LastBeat: now - 5000, Banned: 1} // idle but banned
+
+	s.evictIdleLocked()
+
+	if _, ok := s.stats["idle"]; ok {
+		t.Error("idle entry should have been evicted")
+	}
+	if _, ok := s.stats["fresh"]; !ok {
+		t.Error("fresh entry should have been kept")
+	}
+	if _, ok := s.stats["banned"]; !ok {
+		t.Error("banned entry should be kept even when idle")
+	}
+}
 
 // newTestServer builds a PolicyServer without Start() so the share-policy
 // decision can be exercised without a Redis backend or the background workers.
