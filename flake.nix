@@ -23,9 +23,11 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
+        version = "0.9.0";
+
         open-etc-pool = pkgs.buildGoModule {
           pname = "open-etc-pool";
-          version = "0.0.0+${self.shortRev or "dirty"}";
+          version = "${version}+${self.shortRev or "dirty"}";
           src = self;
 
           # Hash of the module dependencies. Recompute after go.mod/go.sum
@@ -37,7 +39,7 @@
 
           # The pool is pure Go — build a static binary (smaller image, no libc).
           env.CGO_ENABLED = "0";
-          ldflags = [ "-s" "-w" ];
+          ldflags = [ "-s" "-w" "-X main.version=${version}+${self.shortRev or "dirty"}" ];
 
           meta = with pkgs.lib; {
             description = "Open source Ethereum Classic mining pool";
