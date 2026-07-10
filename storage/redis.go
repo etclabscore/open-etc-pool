@@ -414,9 +414,29 @@ func (r *RedisClient) RollbackBalance(login string, amount int64) error {
 		tx.HIncrBy(ctx, r.formatKey("finances"), "balance", amount)
 		tx.HIncrBy(ctx, r.formatKey("finances"), "pending", (amount * -1))
 		tx.ZRem(ctx, r.formatKey("payments", "pending"), join(login, amount))
+		tx.HDel(ctx, r.formatKey("payments", "pendingtx"), join(login, amount))
 		return nil
 	})
 	return err
+}
+
+// SetPendingPaymentTx records the broadcast transaction hash for the in-flight
+// pending payment (there is only ever one, guarded by the global payout lock).
+// It lets resolvePayouts distinguish an already-sent payout from one that never
+// left the pool, so a crash between broadcasting the tx and WritePayment cannot
+// be resolved by crediting the balance back and double-paying.
+func (r *RedisClient) SetPendingPaymentTx(login string, amount int64, txHash string) error {
+	return r.client.HSet(ctx, r.formatKey("payments", "pendingtx"), join(login, amount), txHash).Err()
+}
+
+// GetPendingPaymentTx returns the recorded broadcast tx hash for a pending
+// payment, or an empty string if none was recorded (the payout was never sent).
+func (r *RedisClient) GetPendingPaymentTx(login string, amount int64) (string, error) {
+	txHash, err := r.client.HGet(ctx, r.formatKey("payments", "pendingtx"), join(login, amount)).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return txHash, err
 }
 
 func (r *RedisClient) WritePayment(login, txHash string, amount int64) error {
@@ -430,6 +450,7 @@ func (r *RedisClient) WritePayment(login, txHash string, amount int64) error {
 		tx.ZAdd(ctx, r.formatKey("payments", "all"), redis.Z{Score: float64(ts), Member: join(txHash, login, amount)})
 		tx.ZAdd(ctx, r.formatKey("payments", login), redis.Z{Score: float64(ts), Member: join(txHash, amount)})
 		tx.ZRem(ctx, r.formatKey("payments", "pending"), join(login, amount))
+		tx.HDel(ctx, r.formatKey("payments", "pendingtx"), join(login, amount))
 		tx.Del(ctx, r.formatKey("payments", "lock"))
 		return nil
 	})

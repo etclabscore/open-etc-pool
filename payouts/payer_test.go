@@ -16,6 +16,8 @@ type fakePayerRPC struct {
 	poolBalance    *big.Int
 	poolBalanceErr error
 	sendTxErr      error
+	receipt        *rpc.TxReceipt
+	receiptErr     error
 }
 
 func (f *fakePayerRPC) GetPeerCount() (int64, error)         { return f.peers, nil }
@@ -24,7 +26,7 @@ func (f *fakePayerRPC) GetBalance(a string) (*big.Int, error) { return f.poolBal
 func (f *fakePayerRPC) SendTransaction(from, to, gas, gasPrice, value string, autoGas bool) (string, error) {
 	return "0xtxhash", f.sendTxErr
 }
-func (f *fakePayerRPC) GetTxReceipt(hash string) (*rpc.TxReceipt, error) { return nil, nil }
+func (f *fakePayerRPC) GetTxReceipt(hash string) (*rpc.TxReceipt, error) { return f.receipt, f.receiptErr }
 
 const payerPrefix = "test-payer"
 

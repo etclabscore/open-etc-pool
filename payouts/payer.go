@@ -193,6 +193,17 @@ func (u *PayoutsProcessor) process() {
 			break
 		}
 
+		// Record the broadcast tx hash before WritePayment, so that a crash here
+		// leaves enough state for resolvePayouts to recognise this payout as
+		// already sent and not credit the balance back (which would double-pay).
+		err = u.backend.SetPendingPaymentTx(login, amount, txHash)
+		if err != nil {
+			log.Printf("Failed to record pending tx %s for %s: %v", txHash, login, err)
+			u.halt = true
+			u.lastFail = err
+			break
+		}
+
 		// Log transaction hash
 		err = u.backend.WritePayment(login, txHash, amount)
 		if err != nil {
@@ -286,15 +297,43 @@ func (self PayoutsProcessor) resolvePayouts() {
 	payments := self.backend.GetPendingPayments()
 
 	if len(payments) > 0 {
-		log.Printf("Will credit back following balances:\n%s", formatPendingPayments(payments))
+		log.Printf("Resolving %v pending payment(s):\n%s", len(payments), formatPendingPayments(payments))
 
 		for _, v := range payments {
-			err := self.backend.RollbackBalance(v.Address, v.Amount)
+			txHash, err := self.backend.GetPendingPaymentTx(v.Address, v.Amount)
 			if err != nil {
-				log.Printf("Failed to credit %v Shannon back to %s, error is: %v", v.Amount, v.Address, err)
+				log.Printf("Failed to read pending tx for %s, leaving it for manual resolution: %v", v.Address, err)
 				return
 			}
-			log.Printf("Credited %v Shannon back to %s", v.Amount, v.Address)
+
+			// No tx was ever broadcast (crash before or during send), so the
+			// payout never left the pool and the balance can be credited back.
+			if txHash == "" {
+				if err := self.backend.RollbackBalance(v.Address, v.Amount); err != nil {
+					log.Printf("Failed to credit %v Shannon back to %s: %v", v.Amount, v.Address, err)
+					return
+				}
+				log.Printf("Credited %v Shannon back to %s (no payout tx was broadcast)", v.Amount, v.Address)
+				continue
+			}
+
+			// A payout tx was broadcast. Only credit back if it provably reverted
+			// on-chain; when it succeeded, is still pending, or can't be checked,
+			// treat it as paid so an already-sent payout is never double-paid.
+			receipt, err := self.rpc.GetTxReceipt(txHash)
+			if err == nil && receipt != nil && receipt.Confirmed() && !receipt.Successful() {
+				if err := self.backend.RollbackBalance(v.Address, v.Amount); err != nil {
+					log.Printf("Failed to credit %v Shannon back to %s: %v", v.Amount, v.Address, err)
+					return
+				}
+				log.Printf("Credited %v Shannon back to %s (payout tx %s reverted on-chain)", v.Amount, v.Address, txHash)
+				continue
+			}
+			if err := self.backend.WritePayment(v.Address, txHash, v.Amount); err != nil {
+				log.Printf("Failed to record payment for %s: %v", v.Address, err)
+				return
+			}
+			log.Printf("Recorded %v Shannon to %s as paid (tx %s already broadcast); not crediting back", v.Amount, v.Address, txHash)
 		}
 	} else {
 		log.Println("No pending payments to resolve")
