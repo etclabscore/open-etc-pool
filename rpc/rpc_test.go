@@ -49,6 +49,15 @@ func TestErrorWithoutMessageReturnsErrorNotPanic(t *testing.T) {
 	}
 }
 
+// A whole-body JSON null response is valid JSON that decodes to a nil struct;
+// it must return an error, not panic dereferencing it in doPost.
+func TestNullBodyReturnsErrorNotPanic(t *testing.T) {
+	c := mockNode(t, `null`)
+	if _, err := c.GetWork(); err == nil {
+		t.Fatal("expected an error for a null response body")
+	}
+}
+
 func TestGetWorkValid(t *testing.T) {
 	c := mockNode(t, `{"jsonrpc":"2.0","id":0,"result":["0xheader","0xseed","0xtarget"]}`)
 	work, err := c.GetWork()
