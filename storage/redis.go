@@ -162,8 +162,12 @@ func (r *RedisClient) GetNodeStates() ([]map[string]interface{}, error) {
 }
 
 func (r *RedisClient) checkPoWExist(height uint64, params []string) (bool, error) {
-	// Sweep PoW backlog for previous blocks, we have 3 templates back in RAM
-	r.client.ZRemRangeByScore(ctx, r.formatKey("pow"), "-inf", fmt.Sprint("(", height-8))
+	// Sweep PoW backlog for previous blocks, we have 3 templates back in RAM.
+	// Skip when height <= 8 so height-8 doesn't underflow (uint64) to a huge score
+	// and prune the whole dedup set, briefly disabling duplicate-share detection.
+	if height > 8 {
+		r.client.ZRemRangeByScore(ctx, r.formatKey("pow"), "-inf", fmt.Sprint("(", height-8))
+	}
 	val, err := r.client.ZAdd(ctx, r.formatKey("pow"), redis.Z{Score: float64(height), Member: strings.Join(params, ":")}).Result()
 	return val == 0, err
 }
