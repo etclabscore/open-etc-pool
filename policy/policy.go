@@ -143,7 +143,10 @@ func (s *PolicyServer) resetStats() {
 				total++
 			}
 		}
-		if now-lastBeat >= s.timeout {
+		// Don't drop a still-banned entry via the idle sweep; it is released only
+		// when its ban times out (above). IsBanned no longer heartbeats, so a
+		// banned IP that is merely being probed would otherwise be forgotten early.
+		if now-lastBeat >= s.timeout && atomic.LoadInt32(&m.Banned) == 0 {
 			delete(s.stats, key)
 			total++
 		}

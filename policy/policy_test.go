@@ -16,6 +16,28 @@ func TestIsBannedDoesNotAllocate(t *testing.T) {
 	}
 }
 
+func TestResetStatsKeepsBannedEntriesUntilBanTimeout(t *testing.T) {
+	now := util.MakeTimestamp()
+	s := &PolicyServer{
+		config:  &Config{Banning: Banning{Timeout: 3600}}, // 3600s ban timeout
+		stats:   make(map[string]*Stats),
+		timeout: 1000, // 1s idle reset window (ms)
+	}
+	// Banned and idle, but banned only just now: must survive the idle sweep.
+	s.stats["banned"] = &Stats{LastBeat: now - 100000, BannedAt: now, Banned: 1}
+	// Plain idle, not banned: should be swept.
+	s.stats["idle"] = &Stats{LastBeat: now - 100000}
+
+	s.resetStats()
+
+	if _, ok := s.stats["banned"]; !ok {
+		t.Error("a banned entry must survive the idle sweep until its ban times out")
+	}
+	if _, ok := s.stats["idle"]; ok {
+		t.Error("an idle, non-banned entry should have been swept")
+	}
+}
+
 func TestEvictIdleStats(t *testing.T) {
 	now := util.MakeTimestamp()
 	s := &PolicyServer{config: &Config{}, stats: make(map[string]*Stats), timeout: 1000}
