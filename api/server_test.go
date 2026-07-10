@@ -3,11 +3,14 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 
 	"github.com/etclabscore/open-etc-pool/storage"
+	"github.com/etclabscore/open-etc-pool/util"
 )
 
 const testAddr = "0x0000000000000000000000000000000000000000"
@@ -44,5 +47,26 @@ func TestAccountIndexNotFound(t *testing.T) {
 	s.AccountIndex(rec, accountRequest(testAddr))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// A fresh cache entry is served without touching the backend — proven by an
+// unreachable backend still returning 200 with the cached stats. This also means
+// no backend I/O happens under any lock on the hot (cache-hit) path.
+func TestAccountIndexServesFreshCacheWithoutBackend(t *testing.T) {
+	s := newTestServer("127.0.0.1:1") // backend unreachable
+	s.statsIntv = time.Hour           // wide cache window
+
+	s.minersMu.Lock()
+	s.miners[testAddr] = &Entry{stats: map[string]interface{}{"balance": 42}, updatedAt: util.MakeTimestamp()}
+	s.minersMu.Unlock()
+
+	rec := httptest.NewRecorder()
+	s.AccountIndex(rec, accountRequest(testAddr))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (a fresh cache entry must serve without the backend)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"balance":42`) {
+		t.Fatalf("response did not contain the cached stats: %s", rec.Body.String())
 	}
 }
