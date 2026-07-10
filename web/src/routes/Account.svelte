@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import Icon from '../lib/Icon.svelte';
+  import Chart from '../lib/Chart.svelte';
   import { config } from '../lib/config';
   import { statsPoller } from '../lib/stores';
   import { getAccount, NotFoundError } from '../lib/api';
@@ -96,6 +97,14 @@
       </div>
     </div>
   </section>
+
+  {#if data.charts && data.charts.length}
+    <Chart
+      points={data.charts}
+      value={(p) => p.hashrate}
+      format={formatHashrate}
+      label="Your Hash Rate (24h)" />
+  {/if}
 
   <div class="tabs">
     <a href={'#/account/' + login} class:active={tab === 'workers'}>

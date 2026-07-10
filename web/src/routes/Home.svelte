@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../lib/Icon.svelte';
+  import Chart from '../lib/Chart.svelte';
   import { config } from '../lib/config';
   import { statsPoller } from '../lib/stores';
   import { formatHashrate, formatNumber, formatPercent, formatRelative, metricPrefix, secondsToMs } from '../lib/format';
@@ -71,6 +72,14 @@
     </div>
   </div>
 </section>
+
+{#if $statsPoller.data?.poolCharts && $statsPoller.data.poolCharts.length}
+  <Chart
+    points={$statsPoller.data.poolCharts}
+    value={(p) => p.hashrate}
+    format={formatHashrate}
+    label="Pool Hash Rate (24h)" />
+{/if}
 
 <h4>Your Stats &amp; Payment History</h4>
 <form class="input-group" onsubmit={lookup}>

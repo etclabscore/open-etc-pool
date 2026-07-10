@@ -396,6 +396,63 @@ func reset() {
 	}
 }
 
+func TestPoolChartSampleGateAndTrim(t *testing.T) {
+	reset()
+	const sample = 10 * time.Minute // 600s gate
+	const window = time.Hour         // 3600s
+
+	if err := r.WritePoolChart(1000, 500, 3, sample, window); err != nil {
+		t.Fatal(err)
+	}
+	// Within the sample interval -> gated, dropped.
+	if err := r.WritePoolChart(1100, 999, 9, sample, window); err != nil {
+		t.Fatal(err)
+	}
+	pts := r.GetPoolChart()
+	if len(pts) != 1 {
+		t.Fatalf("want 1 point after a gated sample, got %d", len(pts))
+	}
+	if pts[0]["hashrate"].(int64) != 500 || pts[0]["minersOnline"].(int64) != 3 || pts[0]["x"].(int64) != 1000 {
+		t.Fatalf("point = %v", pts[0])
+	}
+
+	// Past the interval -> lands.
+	if err := r.WritePoolChart(1601, 700, 4, sample, window); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.GetPoolChart()) != 2 {
+		t.Fatalf("want 2 points, got %d", len(r.GetPoolChart()))
+	}
+
+	// A sample far ahead trims points older than the window (the ts=1000 point).
+	if err := r.WritePoolChart(5000, 800, 5, sample, window); err != nil {
+		t.Fatal(err)
+	}
+	pts = r.GetPoolChart()
+	if len(pts) != 2 {
+		t.Fatalf("want 2 points after trim, got %d", len(pts))
+	}
+	for _, p := range pts {
+		if p["x"].(int64) == 1000 {
+			t.Fatal("a point older than the window should have been trimmed")
+		}
+	}
+}
+
+func TestMinerChartRoundTrip(t *testing.T) {
+	reset()
+	if err := r.WriteMinerChart("0xaa", 1000, 1200, time.Minute, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	pts := r.GetMinerChart("0xaa")
+	if len(pts) != 1 || pts[0]["hashrate"].(int64) != 1200 || pts[0]["x"].(int64) != 1000 {
+		t.Fatalf("miner chart = %v", pts)
+	}
+	if len(r.GetMinerChart("0xbb")) != 0 {
+		t.Fatal("unknown miner should have an empty chart")
+	}
+}
+
 func TestLockPayoutsContention(t *testing.T) {
 	reset()
 
